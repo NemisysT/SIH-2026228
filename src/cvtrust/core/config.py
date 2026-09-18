@@ -327,6 +327,54 @@ class ModelConfig(_Base):
     trigger: TriggerConfig = TriggerConfig()
 
 
+class ProvenanceConfig(_Base):
+    """Module 3: inference provenance and cryptographic integrity.
+
+    Small on purpose.  Almost nothing about cryptographic verification is a
+    tunable: a digest either matches or it does not, and a "signature strictness"
+    knob would be a way to turn verification off.  What is here are the genuine
+    policy choices an operator has to make, and each one changes what a
+    verification *means*, so each is in the configuration hash and printed in
+    the report.
+    """
+
+    validity_policy: Literal["at_record_timestamp", "at_verification_time"] = Field(
+        default="at_record_timestamp",
+        description="When to evaluate a signing key's validity window. "
+        "'at_record_timestamp' honours key rotation -- a record signed last year "
+        "by a key retired since still verifies -- at the cost that the moment is "
+        "the record's own self-asserted clock, which a key holder also controls. "
+        "'at_verification_time' is immune to backdating and invalidates the "
+        "entire history of every key that has ever expired.",
+    )
+    required_key_purpose: Literal["inference_provenance", "log_anchor", "any"] = Field(
+        default="inference_provenance",
+        description="Purpose a key must be authorised for to sign inference "
+        "records. A key trusted to sign records is not thereby trusted to attest "
+        "that a log is complete.",
+    )
+    record_observations: bool = Field(
+        default=True,
+        description="Whether verifying a log adds its records to the replay "
+        "database. Off makes a verification a pure dry run; the database is "
+        "returned either way and the caller decides whether to persist it.",
+    )
+    require_signature: bool = Field(
+        default=True,
+        description="Whether an unsigned record is a finding. On by default: an "
+        "unsigned record attributes itself to no one.",
+    )
+    output_quantization_places: int = Field(
+        default=6,
+        ge=0,
+        le=12,
+        description="Decimal places used to put confidences, box coordinates and "
+        "configuration floats on a fixed grid before hashing (ADR-004). Recorded "
+        "in every record, so changing it produces visibly different records "
+        "rather than silently incompatible ones.",
+    )
+
+
 class AggregationConfig(_Base):
     alpha: float = Field(default=0.05, ge=0.0, le=0.5)
     min_contributor_samples: int = Field(default=8, ge=1)
@@ -394,6 +442,11 @@ class Config(_Base):
     #: model assessment's thresholds are folded into the same config hash as a
     #: dataset scan's and the two are comparable artifacts.
     model: ModelConfig = ModelConfig()
+    #: Module 3. Present from this build onward for the same reason Module 2's
+    #: section was: a provenance verification's policy choices belong in the
+    #: same config hash as a dataset scan's thresholds, so the two are
+    #: comparable artifacts.
+    provenance: ProvenanceConfig = ProvenanceConfig()
     aggregation: AggregationConfig = AggregationConfig()
     disposition: DispositionConfig = DispositionConfig()
     contributor: ContributorConfig = ContributorConfig()

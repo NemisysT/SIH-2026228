@@ -393,6 +393,152 @@ keeping cards for rejected and failed methods rather than only successful ones.
 
 ---
 
+## Method cards — Module 3 (inference provenance)
+
+Module 3 adapts almost nothing from the ML literature, because its problem is
+not an ML problem. Its sources are standards: RFC 8032, RFC 8785, TUF and
+in-toto. The cards below record what was taken from each and, more usefully,
+what was deliberately *not*.
+
+### 18. Ed25519 / EdDSA
+
+- **Origin**: Bernstein, Duif, Lange, Schwabe & Yang (2011), *High-speed
+  high-security signatures*; standardised as RFC 8032 (2017).
+- **Original purpose**: general-purpose digital signatures.
+- **Assumptions**: discrete-log hardness on Curve25519; the private key is
+  secret.
+- **Inputs required**: a byte string. Nothing else.
+- **Access**: not applicable — no model involved.
+- **Strengths**: deterministic (no per-signature nonce to leak the key through),
+  64-byte signature, 32-byte public key, no parameter choices, constant-time
+  reference implementations, small enough to embed in every record.
+- **Weaknesses**: no built-in key management, no revocation, no expiry — all of
+  which have to be built around it, which is what the trust store is.
+- **Implementation decision**: used through `cryptography`, never reimplemented.
+  Chosen over ECDSA specifically for determinism: ECDSA's per-signature nonce
+  has cost real deployments their private keys through reuse or bias, and the
+  determinism additionally lets the attack lab be regenerated and byte-diffed
+  rather than merely re-run. Chosen over RSA because a 384-byte signature per
+  inference is a sixfold log-size increase for no gain at this level.
+
+### 19. Hash chains for tamper-evident logging
+
+- **Origin**: Haber & Stornetta (1991), *How to time-stamp a digital document* —
+  the linking scheme, which predates and underlies every blockchain.
+- **Original purpose**: making a document's position in a sequence
+  unforgeable without a trusted third party.
+- **Assumptions**: collision resistance; the verifier sees the entries in the
+  order they appear.
+- **Strengths**: detects modification, deletion, insertion, reordering and
+  duplication with one digest per entry and no consensus layer.
+- **Weaknesses**: **cannot detect truncation at the tail**, because a truncated
+  chain is a valid shorter chain. This is inherent, not an implementation gap.
+- **Implementation decision**: the chained digest covers the record payload
+  **and** its signature envelope, not the payload alone. A payload-only chain
+  reports itself intact when a signature has been swapped on an already-linked
+  entry, and a chain that reports itself intact over a tampered entry is worse
+  than no chain. Sequence numbers are carried alongside, adding no cryptographic
+  guarantee but turning "link 7 does not match" into "an entry was deleted
+  between 6 and 8". Truncation is addressed by an out-of-band anchor and
+  reported `NOT_DETECTABLE` without one — see method card §20.
+
+### 20. Log anchoring — *the honest answer to an unsolvable problem*
+
+- **Origin**: the checkpoint/witness pattern in certificate transparency (RFC
+  6962) and in TUF's timestamp role, reduced to its offline essentials.
+- **Original purpose**: letting a verifier detect that a log has been rolled
+  back or truncated, by holding a digest the log's operator cannot influence.
+- **Assumptions**: the anchor is stored where the log's producer cannot write.
+  **This assumption is the whole mechanism**, and no software can enforce it.
+- **Strengths**: turns an undetectable attack into a detected one, with one
+  digest and one integer.
+- **Weaknesses**: covers only entries written before the anchor was taken;
+  covers the head and the count, not the interior; and an anchor kept beside the
+  log it anchors protects against nothing.
+- **Implementation decision**: implemented, with the CLI writing anchors to an
+  explicitly separate path and printing the storage requirement. The alternative
+  — a gossip protocol or a witness network, as certificate transparency uses —
+  requires exactly the network the air-gap forbids. Without an anchor the
+  verifier reports `NOT_DETECTABLE` rather than clean, which is the substantive
+  part: the limitation is visible in the report, not only in this file.
+
+### 21. Replay detection by observation memory
+
+- **Origin**: standard practice in authentication protocols (nonce caches in
+  Kerberos, WS-Security, OAuth `jti` blacklists).
+- **Original purpose**: preventing a captured, valid message from being
+  accepted twice.
+- **Assumptions**: the verifier keeps state, and that state is protected.
+- **Strengths**: deterministic; detects exact re-presentation, nonce reuse and
+  sequence collision, all with a local lookup.
+- **Weaknesses**: the database *is* the security property. Delete it and every
+  record becomes first-seen again. It is also local, so two verifiers each
+  accept replays the other would catch, and retention bounds every negative
+  result.
+- **Implementation decision**: implemented with an explicit fourth verdict,
+  `DUPLICATE_SUBJECT`, for the same input legitimately processed twice. Every
+  real pipeline does this, and a detector that called it replay would be
+  switched off within a day. Three replay verdicts are failures and that one is
+  an observation; the separation is encoded in one tuple (`REPLAY_VERDICTS`) so
+  it cannot drift, and `legitimate_reprocess` in the lab asserts it produces
+  zero findings. The alternative — a shared ledger, so that all verifiers see
+  the same history — is what ADR-009 declined.
+
+### 22. TUF / in-toto — *the model, not the implementation*
+
+- **Origin**: Samuel et al. (2010), *Survivable key compromise in software
+  update systems* (TUF); Torres-Arias et al. (USENIX Security 2019) (in-toto).
+- **What was taken**: signed metadata *about* artifacts kept distinct from the
+  artifacts themselves; identity separated from location; an attestation per
+  step in a supply chain; explicit key roles with distinct authority.
+- **What was not taken**: TUF's role hierarchy (root, targets, snapshot,
+  timestamp), threshold signatures, and the delegation tree. All of them solve
+  the problem of *distributing* trust among multiple parties with partial
+  authority, which a single air-gapped analyst authority does not have. Adopting
+  them would have added four metadata roles and a delegation resolver to solve a
+  problem nobody has.
+- **Implementation decision**: the record is an in-toto-shaped attestation
+  reduced to one step — input, model, configuration, output, signer — and the
+  key-role idea survives as the two-value `KeyPurpose`, which is the one
+  distinction that earns its keep: a key trusted to sign inference records must
+  not be able to attest that a log is complete, or the producer could mint its
+  own anchor.
+
+### 23. RFC 8785 — *adopted, with one documented divergence*
+
+Recorded in full under ADR-004 and carried forward unchanged: the
+key-ordering, whitespace and UTF-8 rules are adopted; number canonicalisation is
+**not**, and floats are rejected on the digest path in favour of fixed-point
+integers. Module 3 is the module that would have paid for that subtlety, since
+it is the one that signs these structures, and the decision was made in Module 1
+precisely in anticipation of it.
+
+One Module 3 addition: **Unicode strings are not normalised**. NFC and NFD forms
+of the same label are different byte strings and get different digests. Silently
+normalising would mean the digest covers something other than what the producer
+emitted, and an analyst comparing a record against a model's actual label
+vocabulary would find them disagreeing for reasons invisible in both. A
+deployment that needs them unified normalises before binding, where the choice is
+visible.
+
+---
+
+## Module 3 — considered and rejected
+
+| Method | Why not |
+|---|---|
+| **A blockchain / distributed ledger** | ADR-009, and it predates this module. A ledger buys Byzantine agreement among mutually distrusting writers. This deployment has one writer, no network to gossip over, and no second party whose disagreement about ordering must be resolved. It would add nodes, key distribution, fork resolution and a synchronisation requirement that directly contradicts the air-gap. |
+| **A Merkle tree over the log** | ADR-009 listed it as a possible addition "if justified by volume". It is not. A Merkle tree buys efficient *inclusion proofs* — proving one record is in a log without shipping the log — which matters when a verifier holds a root and a prover holds the data. Here the analyst holds the whole log and verifies 200 entries in 8.8 ms. It would add a second set of invariants to get wrong in exchange for solving a problem nobody has. The point to add it is when membership must be proved to a party that does not hold the log. |
+| **RFC 3161 trusted timestamping** | Requires a timestamp authority, which requires a network. There is none, so the module does not pretend a timestamp proves time — it reports the timestamp as a claim and says what the claim establishes. |
+| **X.509 certificates and a PKI** | A certificate is a signed assertion that a key belongs to an identity, made by an authority. With no network there is no authority to consult, no revocation service, and no chain to build — so a certificate would reduce to "a public key plus a local decision to trust it", which is exactly what the trust store already is, minus a large parsing surface. |
+| **HMAC instead of signatures** | Anyone who can verify an HMAC can also forge one. Non-repudiation requires asymmetry. |
+| **Encrypting the provenance records** | Confidentiality is not the property being sought and encryption would provide none of it usefully — the analyst is the reader. It would, however, make a log unverifiable by anyone who loses the key, turning an integrity tool into an availability risk. |
+| **A "provenance confidence score"** | The specific failure ADR-014 exists to prevent. A digest matches or it does not; expressing that as 0.93 would be a lie with a decimal point. |
+| **Deriving signing keys from a passphrase** | Would make key strength a function of operator password choice, silently. Real key generation from the OS CSPRNG, plus passphrase *encryption* of the stored key, keeps the two concerns separate. |
+| **Merging the ML assurance verdict with the cryptographic one** | ADR-014. They are different kinds of evidence with different failure modes, and a system that averaged them could report a forged record of a clean model and a valid record of a backdoored one as the same number. |
+
+---
+
 ## Module 2 — considered and rejected
 
 | Method | Why not |
@@ -481,6 +627,6 @@ assumed.
 | **Pretrained CNN embeddings** as the default feature space | Requires downloading weights, which the air-gap forbids, and makes every downstream number depend on an artifact whose provenance we would then have to assure — circular, in an integrity tool. Available as an opt-in backend with a locally vendored, hash-recorded weight file. |
 | **Spectral signatures** (Tran, Li & Madry, NeurIPS 2018) and **activation clustering** (Chen et al., 2018) for poisoning | Both operate on a model's internal activations. Module 2 scope; implementing them here would mean partial backdoor detection with no model-side counterpart (ADR-008). **Implemented in Module 2 and measured non-discriminating** — see method cards §14–15. |
 | **Neural Cleanse** trigger reconstruction (Wang et al., IEEE S&P 2019) | White-box, model-dependent. Module 2. **Implemented there**; see method card §12 for its measured limit at low class counts. |
-| **A distributed ledger / blockchain** | ADR-009. A single-authority air-gapped analyst deployment has no Byzantine multi-writer consensus problem to solve. Hash-chained append-only logs with Ed25519 signatures give tamper-evidence at a fraction of the complexity. Recorded in `docs/architecture.md`. |
-| **RFC 8785 float canonicalisation** | Implementable but subtle, and every subtlety becomes a signature-verification bug once Module 3 signs these structures. Floats are instead rejected on the digest path and carried as fixed-unit integers (ADR-004). |
+| **A distributed ledger / blockchain** | ADR-009. A single-authority air-gapped analyst deployment has no Byzantine multi-writer consensus problem to solve. Hash-chained append-only logs with Ed25519 signatures give tamper-evidence at a fraction of the complexity. **Module 3 built exactly that** and still has no ledger; see method cards §19–21. |
+| **RFC 8785 float canonicalisation** | Implementable but subtle, and every subtlety becomes a signature-verification bug once Module 3 signs these structures. Floats are instead rejected on the digest path and carried as fixed-unit integers (ADR-004). **Module 3 signed those structures and the decision held** — no float has ever reached a signature. |
 | **Full-image histogram equalisation before hashing** | Would add photometric invariance that pHash already has via DC exclusion, while destroying the exposure statistics the OOD detector's acquisition block depends on. |

@@ -237,5 +237,115 @@ cvtrust model assess /incoming/detector_v18.onnx \
 
 **Store baseline manifests on separate media from the artifacts they describe.**
 Manifest self-tampering is detected, but an adversary with write access to both
-could replace a manifest with a self-consistent forgery. Ed25519 signatures
-arrive in Module 3; until then, separation is the control.
+could replace a manifest with a self-consistent forgery. Module 3 makes signing
+a manifest possible — its digest binds into a signed provenance record — but
+`model manifest` and `dataset manifest` still write plain JSON, so **separation
+remains the control**.
+
+---
+
+## Module 3 — inference provenance in an air-gapped deployment
+
+Module 3 adds **no new dependencies and no new runtimes**. `cryptography` is
+already a core requirement, and provenance verification binds Module 2's digests
+rather than recomputing them, so it runs in a Module-1-only environment with no
+ONNX or PyTorch installed.
+
+It also adds no new network surface, which is where signing systems usually
+acquire one. There is no certificate authority, no OCSP responder, no CRL fetch,
+no key server and no RFC 3161 timestamp authority — and
+`tests/security/test_offline.py` asserts that statically, by scanning the
+provenance modules for those APIs, as well as dynamically.
+
+### Provisioning a signing key
+
+```bash
+# On the SIGNING host (the one running inference).
+cvtrust provenance keygen --out /secure/keys/signer.pem --label "edge-node-3"     --passphrase "$SIGNING_PASSPHRASE"
+```
+
+This writes a passphrase-encrypted PKCS#8 private key at mode `0600`, and a
+`signer.pub.json` beside it. Without `--passphrase` the command **refuses**
+unless `--allow-unencrypted` is passed: an unencrypted operational key should be
+a decision someone made, not a default they inherited.
+
+**State the assumption you are accepting.** This software cannot protect a
+private key from a compromised host — it is a process reading a file, and an
+adversary with code execution as the signing user can read the key or simply ask
+this software to sign. A hardware token is the correct answer and is not
+integrated. See `docs/cryptographic-model.md` §5.
+
+### Provisioning trust — the step that matters most
+
+```bash
+# On the VERIFYING host. Carry signer.pub.json over by an INDEPENDENT channel.
+cvtrust provenance trust add /media/courier/signer.pub.json     --store /secure/trust_store.json     --label "edge-node-3"     --purpose inference_provenance     --valid-from 2026-03-01T00:00:00Z     --provenance "hand-carried on write-once media; fingerprint read back by phone"
+```
+
+`--provenance` is free text and it is the most important field in the record.
+**A trust store populated through the same channel that supplies the records
+establishes nothing** — every signature would verify against keys the adversary
+chose. The CLI warns when it is left empty, and the value is printed in every
+finding's assumptions so a reviewer can judge the claim.
+
+### Recording and verifying
+
+```bash
+# On the signing host, per inference.
+cvtrust provenance record /data/frame_00417.png /tmp/output.json     --key /secure/keys/signer.pem --passphrase "$SIGNING_PASSPHRASE"     --log /var/log/cvtrust/provenance.jsonl     --model-manifest /secure/baselines/detector_v17.json
+
+# Periodically, on the verifying host: take an anchor and store it where the
+# signing host CANNOT write. This is the only thing that makes tail truncation
+# detectable.
+cvtrust provenance anchor /var/log/cvtrust/provenance.jsonl     --out /media/write-once/anchor-2026-03-01.json
+
+# Verify.
+cvtrust provenance verify-log /var/log/cvtrust/provenance.jsonl     --store /secure/trust_store.json     --anchor /media/write-once/anchor-2026-03-01.json     --replay-db /secure/replay.json     --model-manifest /secure/baselines/detector_v17.json     --out reports/provenance.json --markdown-out reports/provenance.md
+```
+
+Exit codes follow the same convention: `0` verified · `1` review · `2` explained
+error · `3` compromised.
+
+### What to protect, and why
+
+| Artifact | Why it matters | If an adversary controls it |
+|---|---|---|
+| `signer.pem` | The signing key | They can emit records that verify against your trust store |
+| `trust_store.json` | Which keys you authorise | They can authorise their own key; every forgery then verifies |
+| `anchor-*.json` | The head digest | Tail truncation becomes undetectable again. **An anchor stored beside the log it anchors protects against nothing** |
+| `replay.json` | What has already been seen | They can roll it back and every replay becomes first-seen |
+
+The provenance log itself is the *least* sensitive of the five: it is what the
+other four exist to verify, and tampering with it is what the module detects.
+
+### Key rotation and revocation
+
+```bash
+# Rotate: add the successor, leave the predecessor trusted for the period it
+# signed. Both verify; rotation is an ordinary state, not an outage.
+cvtrust provenance trust add /media/courier/signer-2027.pub.json     --store /secure/trust_store.json --valid-from 2027-01-01T00:00:00Z     --provenance "hand-carried, annual rotation"
+
+# Revoke: absolute, and effective only for verifications reading THIS store.
+# There is no revocation service.
+cvtrust provenance trust revoke <key_id> --store /secure/trust_store.json     --reason "signing host suspected compromised 2027-04-02"
+
+cvtrust provenance trust list --store /secure/trust_store.json
+```
+
+One deployment decision to make deliberately: `provenance.validity_policy`.
+`at_record_timestamp` (the default) honours rotation, and its weakness is exact —
+a holder of a retired key also controls the timestamp, so an expired key can be
+revived by backdating. `at_verification_time` is immune to that and invalidates
+the entire history of every key that has ever expired. Whichever you choose is
+recorded in every verification report.
+
+### Storage planning
+
+About **2.8 KB per record** (dominated by the inline canonical output, which is
+what lets a record be verified against itself) and **~443 bytes per replay
+observation**. A pipeline at one inference per second produces roughly 240 MB of
+log and 38 MB of replay database per day.
+
+Chain verification is O(n) and re-hashes every entry — 200 entries in ~11 ms —
+so a log that grows without bound verifies proportionally more slowly. Anchor
+and rotate logs rather than verifying less.

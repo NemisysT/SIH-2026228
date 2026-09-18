@@ -145,3 +145,30 @@ def digest_safe(value: Any, places: int = 6) -> Any:
     if isinstance(value, dict):
         return {k: digest_safe(v, places) for k, v in value.items()}
     return value
+
+
+def undigest_safe(value: Any) -> Any:
+    """Invert :func:`digest_safe` for *display only*.
+
+    Module 3 stores preprocessing and inference configuration inside the signed
+    provenance record in digest-safe form, so that the record's canonical bytes
+    are float-free end to end (ADR-004) and the record is self-verifying: a
+    verifier can recompute the configuration digest from the record alone.
+
+    The cost is that ``{"threshold": 0.9}`` is stored as
+    ``{"threshold": {"$q": 900000, "p": 6}}``, which no analyst should be asked
+    to read.  This function rebuilds the float for a report or a console view.
+
+    It is **lossy at the quantisation grid** and is therefore never used on an
+    integrity path: nothing in this codebase re-derives a digest from the output
+    of this function.
+    """
+    if isinstance(value, dict):
+        if set(value) == {QUANT_KEY, "p"} and isinstance(value.get(QUANT_KEY), int):
+            places = value["p"]
+            if isinstance(places, int) and 0 <= places <= 18:
+                return value[QUANT_KEY] / (10**places)
+        return {k: undigest_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [undigest_safe(v) for v in value]
+    return value

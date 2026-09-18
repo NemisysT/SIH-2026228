@@ -6,9 +6,9 @@ A unified **evidence pipeline** for assuring computer-vision pipelines whose
 contributors, datasets, models and inference records are all untrusted. One
 ingestion path, one evidence schema, one report, one coverage statement.
 
-Modules 1 (datasets) and 2 (models) are implemented. Modules 3–5 attach to the
-same schema and the same manifest identity; they are declared `NOT_ASSESSED`
-in every report until they exist.
+Modules 1 (datasets), 2 (models) and 3 (inference provenance) are implemented.
+Modules 4–5 attach to the same schema and the same manifest identity; they are
+declared `NOT_ASSESSED` in every report until they exist.
 
 ```
 DATASET (untrusted)
@@ -103,6 +103,60 @@ ModelHandle + Capability set  inference · graph · parameters · activations ·
    ▼  ModelAssuranceReport    JSON + console/Markdown + RunContext
 ```
 
+## 1b. The provenance pipeline (Module 3)
+
+A third entry point over the same evidence schema, disposition policy and
+coverage statement — and the first one that *consumes* the other two rather than
+running beside them. It computes no dataset or model forensics of its own: it
+binds Module 1's sample digests and Module 2's three model digests, so a
+mismatch it reports and a mismatch `cvtrust model verify` reports are statements
+about the same values.
+
+```
+PROVENANCE LOG (untrusted)          TRUST STORE        ANCHOR       REPLAY DB
+   │  JSONL, one signed record       (analyst's)      (out of band)  (local)
+   │  per line; unparseable lines         │                │             │
+   │  are findings, not aborts            │                │             │
+   ▼                                      │                │             │
+verify_chain  ── FIRST, because a record's position is a property of the
+   │             whole sequence, not of the record                       │
+   │   linkage over entry_digest (payload + SIGNATURE, ADR-015)          │
+   │   contiguous sequence numbers from genesis                          │
+   │   truncation ── front: detected · tail: ONLY against an anchor ─────┤
+   ▼                                      │                │             │
+verify_record  per entry, with the chain result in hand    │             │
+   │                                      │                │             │
+   │   ┌─ the record alone ──────── schema · record id · self-consistency
+   │   ├─ signature + trust store ── Ed25519 · key known · key trusted · │
+   │   │                             window · purpose ─────┘             │
+   │   ├─ the expectation ───────── input · model · config · output      │
+   │   │      (from M1 sample digests and M2 manifests) ─────────────────┤
+   │   └─ replay database ───────── exact · nonce · sequence · SUBJECT ──┘
+   │      EVERY check runs. Nothing short-circuits.
+   ▼
+FailureCode[]  integrity | trust | context — three groups, three remedies
+   │
+   ▼  Finding[]  (the SAME schema, always DETERMINISTIC at 1.0 — ADR-014)
+   │
+   ▼  VerificationMatrix   per-check tallies; names the run's blind spots
+   ▼  DispositionPolicy    the same explicit rule table
+   ▼  CoverageStatement    the same registry, now including Module 3 classes
+   ▼  ProvenanceReport     JSON + console/Markdown + RunContext
+                           NO aggregate score, and there will not be one
+```
+
+### Why chain verification runs before record verification
+
+A record's `previous_record_valid` and `sequence_valid` checks are answers about
+its *position*, and a position is a property of the sequence. Verifying records
+first and then the chain would leave every position check reporting
+`NOT_CHECKED` in a log verification — the report saying it did not look at the
+thing it was asked to look at.
+
+The replay database is threaded through the record loop rather than consulted
+once, because a log containing the same record twice must have the second one
+flagged, and that is only visible if the first has already been recorded.
+
 ### Why the model detector order is fixed in code
 
 ```
@@ -129,7 +183,8 @@ detectors cost one pass rather than three.
 | `risk/` | Statistics, calibration tables, contributor aggregation, disposition policy, coverage statement. |
 | `reporting/` | The report model and its renderings. Human views are generated *from* the report object so the two cannot drift. |
 | `models/` | **Module 2.** Model adapters (ONNX, TorchScript, torch), the three-digest manifest, the reference battery, behavioural fingerprinting, parameter statistics, activation analysis, trigger search, and optional local benchmark ingestion. |
-| `attack_lab/` | Corpus generation, five reproducible dataset attacks, a fifteen-scenario model attack lab with its own CNN trainer, and both evaluation harnesses. |
+| `provenance/` | **Module 3.** The canonical record schema, output and configuration binding, Ed25519 key lifecycle, the offline trust store, signing, record verification, the replay database, the hash-chained log and its anchor, and the performance benchmark. |
+| `attack_lab/` | Corpus generation, five reproducible dataset attacks, a fifteen-scenario model attack lab with its own CNN trainer, a twenty-eight-scenario provenance attack lab, and all three evaluation harnesses. |
 | `cli/` | `typer` application. |
 
 ## 3. Design decisions that shape everything else
@@ -287,6 +342,55 @@ as their stated reason.
 This is the architectural commitment behind the whole project: a measurement
 that contradicts a design is more valuable than the design, and hiding it would
 make every other number in the system unbelievable.
+
+### ADR-014 — Cryptographic invalidity and ML suspicion never become one number
+
+Module 3's findings are `DETERMINISTIC` at confidence 1.0, always. Modules 1, 2
+and 4 produce `STATISTICAL`, `CALIBRATED` and `HEURISTIC_UNCALIBRATED`
+confidences. **These are different kinds of evidence and the system never
+combines them.**
+
+The reason is that all four of these states are real and an analyst has to be
+able to tell them apart:
+
+```
+model looks clean     + provenance valid     → the ordinary case
+model looks clean     + provenance INVALID   → someone rewrote the account of it
+model looks suspicious + provenance valid    → a genuine record of a bad model
+model looks suspicious + provenance INVALID  → nothing here can be relied on
+```
+
+Any function that mapped these onto one scale would map rows 2 and 3 onto the
+same value, and they call for opposite actions: row 2 is an integrity incident
+with a clean artifact, row 3 is an artifact problem with a trustworthy audit
+trail. So Module 3 carries its own attack classes, its own report schema with no
+aggregate field of any kind, and a `DETERMINISTIC` basis enforced by the
+`Finding` validator and asserted by a test. Its report object has no
+`integrity_score`, no `trust_percentage`, and will not acquire one.
+
+The corollary, which Module 3 also enforces: a check that *could not run* is
+never a pass. An absent trust store, replay database, anchor or expectation
+degrades that attack class to `NOT_ASSESSED`, and any finding depending on it is
+dispositioned `REVIEW` by rule `D-000-not-assessed` — never quarantining a
+pipeline over an input the operator simply did not supply, and never reporting
+it clean either. The report's verification matrix lists every check that
+produced neither a pass nor a fail on any record, so the run's blind spots are
+printed rather than inferred.
+
+### ADR-015 — The chained digest covers the signature, not only the payload
+
+`entry_digest` is SHA-256 over `{"record": …, "signature": …}` together. The
+obvious alternative — chaining the payload alone — has a specific hole: an
+adversary who swaps a signature on an already-linked record leaves every
+back-pointer matching, so the chain reports itself **intact** while carrying an
+entry whose authenticity has changed. That entry's own signature check would
+still fail, but a chain that reports itself intact over a tampered entry is
+worse than no chain, because it is the field an operator reads first.
+
+The cost is that the chain cannot be built before signing, which is no cost at
+all: a producer signs and then appends, which is the order it would use anyway.
+The `missing_signature` lab scenario exists to keep this decision honest — it
+strips a signature mid-log and asserts the chain breaks.
 
 ## 4. Extension points
 

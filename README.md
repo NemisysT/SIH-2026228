@@ -9,17 +9,24 @@ Blockchain & Cybersecurity · **Category:** Software
 An offline, air-gapped assurance layer for computer-vision pipelines whose
 contributors, datasets, models and inference records are all untrusted.
 
-> **Build status: Modules 1 and 2 of 5 complete** — foundation and dataset
-> forensics (M1), model forensics and backdoor assurance (M2). Inference
-> provenance (M3), evidence fusion (M4) and the analyst web platform (M5) are
-> **not** implemented, and every report declares them `NOT_ASSESSED` rather than
-> silently omitting them. Run `cvtrust info` to see exactly what this build
-> assesses.
+> **Build status: Modules 1, 2 and 3 of 5 complete** — foundation and dataset
+> forensics (M1), model forensics and backdoor assurance (M2), inference
+> provenance and cryptographic integrity (M3). Evidence fusion (M4) and the
+> analyst web platform (M5) are **not** implemented, and every report declares
+> them `NOT_ASSESSED` rather than silently omitting them. Run `cvtrust info` to
+> see exactly what this build assesses.
 >
 > **A model assurance report never states that a model is safe.** The strongest
 > positive statement available is `NO_ANOMALY_DETECTED` — a statement about the
 > tests that ran, under a recorded access mode and probe battery. That is
 > enforced by a test, not by review.
+>
+> **A provenance report never states that an inference was correct.**
+> `PROVENANCE VERIFIED` is a statement about the integrity of the *records* and
+> about the checks that actually ran. A cryptographically perfect chain over a
+> backdoored model is entirely possible — and the system keeps that fact and the
+> model's own assessment alive independently, never combining them into one
+> number (ADR-014).
 
 ---
 
@@ -50,7 +57,7 @@ printing what it does not claim.
 
 ```bash
 ./scripts/evaluate.sh   # generate all 6 dataset scenarios, measure every detector
-./.venv/bin/pytest      # 321 tests, ~2 min 45 s
+./.venv/bin/pytest      # 579 tests, ~3 min
 ./.venv/bin/cvtrust info
 ```
 
@@ -62,6 +69,20 @@ cvtrust lab model-evaluate model_lab          # measures every model detector
 cvtrust model assess model_lab/backdoor_badnets/model.onnx \
     --reference model_lab/_reference/reference.onnx
 ```
+
+Module 3, end to end — **needs no model runtime**, because it binds Module 2's
+digests rather than recomputing them:
+
+```bash
+./scripts/provenance-evaluate.sh    # 28 scenarios, 3 reports, benchmark, ~10 s
+```
+
+That script builds the provenance attack lab, checks all 28 scenarios against
+ground truth by exact set equality, then renders three reports that are worth
+reading side by side: a clean log that **verifies**, the same log after an
+adversary with their own signing key rewrote a bound model digest — which is
+**COMPROMISED** despite every signature being valid — and a truncated log
+verified *without* an anchor, which reports `NOT_DETECTABLE` rather than clean.
 
 ## What it detects today
 
@@ -75,8 +96,39 @@ cvtrust model assess model_lab/backdoor_badnets/model.onnx \
 | Malformed / contradictory metadata | **SUPPORTED** | schema, dimension, bbox, category and identifier validation | deterministic | | |
 | Post-baseline dataset tampering | **SUPPORTED** | manifest re-verification (`dataset verify`) | deterministic | | |
 | Backdoor trigger injection (**data side**) | `NOT_ASSESSED` | open item — see ADR-011 | | | |
-| Inference tampering / replay / reordering | `NOT_ASSESSED` | Module 3 | | | |
 | Population distribution shift | `NOT_ASSESSED` | Module 4 | | | |
+
+### Module 3 — inference provenance
+
+Measured over **28 reproducible provenance scenarios**. Scoring here is *exact
+set equality* between expected and observed failure codes, per record — not
+precision and recall — because a signature verifies or it does not. An extra
+failure fails a scenario as hard as a missed one. **28/28 reproduce exactly.**
+
+| Threat (PS §2.1) | Coverage | Detected by |
+|---|---|---|
+| Record tampering — input, model, configuration or output | **SUPPORTED**¹ | Ed25519 over canonical bytes, record self-consistency, and the analyst's independent expectation |
+| Model substitution behind a valid record | **SUPPORTED**¹ | The bound Module 2 digests vs the model actually held |
+| Record deletion / insertion / reordering / duplication | **SUPPORTED** | Hash chain over `entry_digest` + contiguous sequence numbers |
+| Signature stripping or substitution | **SUPPORTED** | The chained digest covers the envelope, not only the payload (ADR-015) |
+| Unknown / revoked / expired / wrong-purpose signing key | **PARTIAL**² | The local offline trust store |
+| Inference replay | **PARTIAL**³ | Local replay database: exact, nonce reuse, sequence collision |
+| Log truncation | **PARTIAL**⁴ | Front: the genesis rule. Tail: **only** against an out-of-band anchor |
+
+¹ Degrades to `PARTIAL` with no independent expectation supplied.
+² `NOT_ASSESSED` with no trust store — every key is then `UNKNOWN`.
+³ `NOT_ASSESSED` with no replay database, and always bounded by its retention.
+⁴ `NOT_ASSESSED` with no anchor. **A tail-truncated chain is internally
+perfect**, and the report says `NOT_DETECTABLE` rather than clean.
+
+Measured cost, 200 records: signing 0.117 ms, full verification (27 checks)
+0.492 ms, chain verification 8.8 ms, ~2.8 KB per record.
+
+**The most instructive scenario in the lab** is `modified_model_digest`: an
+adversary holding their own signing key rewrites the bound model digest and
+re-signs. The signature verifies. The record is internally perfect. It is caught
+only because the key is not in the trust store *and* the digest contradicts the
+model the analyst assured — neither alone would have found it.
 
 ### Module 2 — models
 
@@ -199,6 +251,16 @@ finding can recommend quarantine.** Policy rule
 `D-110-severe-but-uncalibrated` downgrades it to `REVIEW`, because quarantine
 should require measured evidence quality.
 
+Module 3 sits entirely in the first row. Every provenance finding is
+`DETERMINISTIC` at 1.0 — a signature verifies or it does not, and there is
+nothing to calibrate in an equality test, so **no calibration table exists for
+it and none will**. A test asserts that no provenance finding ever arrives with
+any other basis, and the provenance report schema has no aggregate score field
+of any kind (ADR-014). A second policy rule matters here too:
+`D-000-not-assessed` downgrades a finding to `REVIEW` when the check that raised
+it could not actually run — so a missing trust store cannot quarantine a
+pipeline, and cannot be mistaken for a clean result either.
+
 ## Architecture
 
 ```
@@ -257,13 +319,23 @@ about artifacts:
 | Artifact identity | SHA-256 over bytes, and separately over decoded content |
 | Dataset identity | Manifest digest over canonical, float-free serialisation |
 | Detect post-hoc modification | Re-derive and compare digests (`dataset verify`) |
-| Non-repudiation | Ed25519 detached signature over the digest (Module 3) |
-| Detect removal / reordering | Hash chain with sequence numbers (Module 3) |
-| Inclusion proofs at volume | Merkle tree over the chain (Module 3, if justified) |
-| Detect replay | Nonce + monotonic sequence + signed timestamp (Module 3) |
+| Non-repudiation | Ed25519 detached signature over canonical bytes — **built** |
+| Detect removal / reordering | Hash chain over payload **and** signature, plus sequence numbers — **built** |
+| Detect replay | Nonce + sequence + a local observation database — **built** |
+| Detect truncation | An out-of-band log anchor — **built**, and honestly scoped |
+| Inclusion proofs at volume | A Merkle tree — **still not built, and still not needed** |
 
-The manifest format is already signature-ready; Module 3 attaches a signature
-without a schema change. Full reasoning in `docs/architecture.md` §ADR-009.
+Module 3 built all of that and there is still no ledger. The Merkle tree is the
+one item from this table that was listed as conditional and remains
+unimplemented, on purpose: a tree buys efficient *inclusion proofs* — proving one
+record is in a log without shipping the log — which matters when a verifier holds
+a root and a prover holds the data. Here the analyst holds the whole log and
+verifies 200 entries in 8.8 ms. Adding it would mean a second set of invariants
+to get wrong in exchange for solving nobody's problem. The point to add it is
+when membership must be proved to a party that does not hold the log.
+
+Full reasoning in `docs/architecture.md` §ADR-009 and
+`docs/cryptographic-model.md`.
 
 ## Offline by construction
 
@@ -280,11 +352,23 @@ fetching anything.
 Module 2 holds the same line. Its models are trained from seeds rather than
 downloaded, and NIST TrojAI / BackdoorBench artifacts are read **only** from a
 locally vendored directory — absent means `NOT_ASSESSED` with the reason
-`"required local artifact unavailable"`, never a fetch. The guarantee is tested
-two ways: dynamically, by amputating `socket` and running full dataset and model
-assessments through it; and statically, by asserting the shipped source contains
-no network imports, no URL literals, and no call to `torch.hub`,
-`from_pretrained` or `torchvision.models(weights=...)`. See
+`"required local artifact unavailable"`, never a fetch.
+
+Module 3 is where this usually breaks, because signing systems accumulate
+network dependencies: a key server, an OCSP responder, a CRL fetch, a remote
+timestamp authority. There are **none**. Keys are generated locally, trust is a
+local administrative record, and a timestamp is reported as the producer's claim
+rather than as proof of time.
+
+The guarantee is tested two ways. **Dynamically**, by amputating `socket` and
+running through it a full dataset scan, a full model assessment, the TorchScript
+gradient pathway, model training, and — for Module 3 — key generation, signing,
+verification, chain verification, replay detection, revocation and a complete
+build-and-evaluate of the 28-scenario provenance lab. **Statically**, by
+asserting the shipped source contains no network imports, no URL literals, no
+call to `torch.hub`, `from_pretrained` or `torchvision.models(weights=...)`, no
+certificate/OCSP/CRL/key-server/RFC-3161 API anywhere under `provenance/`, and no
+cryptography library other than `hashlib`, `secrets` and `cryptography`. See
 `tests/security/test_offline.py` and `docs/deployment.md`.
 
 ## Reproducibility
@@ -318,6 +402,22 @@ cvtrust model assess   <model.onnx> --reference <trusted.onnx> [--black-box]
                                     [--calibration F] [--out F] [--markdown-out F]
 cvtrust lab model-build    --out model_lab
 cvtrust lab model-evaluate model_lab
+
+cvtrust provenance keygen      --out keys/signer.pem --passphrase "$PASSPHRASE"
+cvtrust provenance trust add   keys/signer.pub.json --store trust_store.json \
+                               --provenance "hand-carried from the signing enclave"
+cvtrust provenance trust list  --store trust_store.json
+cvtrust provenance trust revoke <key_id> --store trust_store.json --reason "..."
+cvtrust provenance record      <image> <output.json> --key keys/signer.pem \
+                               --log provenance.jsonl --model-manifest model-baseline.json
+cvtrust provenance anchor      provenance.jsonl --out /separate/media/anchor.json
+cvtrust provenance verify-log  provenance.jsonl --store trust_store.json \
+                               --anchor /separate/media/anchor.json --replay-db replay.json \
+                               --model-manifest model-baseline.json [--out F] [--markdown-out F]
+cvtrust provenance verify      <record.json> --store trust_store.json
+cvtrust provenance benchmark   --records 200
+cvtrust lab provenance-build    --out provenance_lab
+cvtrust lab provenance-evaluate provenance_lab
 cvtrust demo
 ```
 
@@ -326,17 +426,26 @@ activation and gradient access before analysis, so the white-box methods take
 their real unavailable path and the report says what black-box coverage actually
 is. It is not a simulation.
 
-`dataset scan` and `model assess` exit codes compose: `0` clean · `1` review ·
-`2` explained error · `3` quarantine or verification failure.
+`provenance keygen` **refuses** to write an unencrypted private key without
+`--allow-unencrypted`: an unencrypted operational signing key should be a
+decision someone made, not a default they inherited. And `verify-log` without an
+anchor reports tail truncation as `NOT_DETECTABLE`, never as clean — a truncated
+chain is internally perfect, and no amount of verification can see past that.
+
+`dataset scan`, `model assess` and `provenance verify-log` exit codes compose:
+`0` clean · `1` review · `2` explained error · `3` quarantine or verification
+failure.
 
 ## Documentation
 
 | | |
 |---|---|
-| [`docs/architecture.md`](docs/architecture.md) | Data flow, interfaces, and all thirteen architecture decision records |
+| [`docs/architecture.md`](docs/architecture.md) | Data flow, interfaces, and all fifteen architecture decision records |
 | [`docs/threat-model.md`](docs/threat-model.md) | Trust boundary, adversary capabilities, per-threat residual risk, attacks on the detectors themselves |
 | [`docs/research.md`](docs/research.md) | Method cards with assumptions and access requirements, methods **rejected** with reasons, and the eleven defects the evaluation harnesses caught |
 | [`docs/model-security.md`](docs/model-security.md) | **Module 2.** Coverage matrix, access modes, measured results, the two methods that did not work, benchmark vendoring |
+| [`docs/provenance.md`](docs/provenance.md) | **Module 3.** The record schema, canonicalisation, verification evidence, the failure taxonomy, replay and chain models, the attack lab, measured performance, and what the module does not establish |
+| [`docs/cryptographic-model.md`](docs/cryptographic-model.md) | **Module 3.** Primitives and why each, what a signature does and does not establish, the host-trust assumption stated plainly, and the threats cryptography does not address |
 | [`docs/coverage.md`](docs/coverage.md) | What is assessed, what is not, and what `SUPPORTED` does not mean |
 | [`docs/attack-matrix.md`](docs/attack-matrix.md) | Every scenario, every measured metric, with evaluation populations |
 | [`docs/limitations.md`](docs/limitations.md) | The complete list, per detector |
@@ -345,12 +454,16 @@ is. It is not a simulation.
 | [`docs/deployment.md`](docs/deployment.md) | Air-gapped install, wheelhouse, everyday use |
 | [`docs/module-1-plan.md`](docs/module-1-plan.md) | The design Module 1 was built to |
 | [`docs/module-2-plan.md`](docs/module-2-plan.md) | The design Module 2 was built to |
+| [`docs/module-3-plan.md`](docs/module-3-plan.md) | The design Module 3 was built to, and the nine defects the provenance lab caught |
 
 ## Stack
 
 Python 3.11+ · NumPy · SciPy · scikit-learn · Pillow · Pydantic v2 · Typer ·
-Rich · `cryptography` (Ed25519, for Module 3 — the manifest format is
-signature-ready now) · pytest.
+Rich · `cryptography` (Ed25519, Module 3) · pytest.
+
+The only cryptographic code in this repository is calls into `hashlib`,
+`secrets` and `cryptography`. Nothing is invented, and a test asserts that no
+other crypto library is imported anywhere under `provenance/`.
 
 **Optional extras for Module 2:** `onnx` + `onnxruntime` (ONNX support) and
 `torch` (TorchScript, the gradient pathway, and the model attack lab's trainer).

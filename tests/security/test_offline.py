@@ -256,3 +256,169 @@ def test_the_optional_runtimes_degrade_rather_than_fail(monkeypatch):
     message = str(excinfo.value)
     assert "not installed" in message
     assert "nothing is downloaded" in message.lower()
+
+
+# ---------------------------------------------------------------------------
+# 4. Module 3 — the whole cryptographic lifecycle, with the network amputated
+#
+# Signing systems are where network dependencies creep in: a key server, an OCSP
+# responder, a remote timestamp authority, a CRL fetch. None of those exist
+# here, and these tests are what keeps it that way — every stage of the key and
+# provenance lifecycle runs with sockets replaced by something that raises.
+# ---------------------------------------------------------------------------
+
+
+def test_key_generation_works_offline(no_network, tmp_path):
+    from cvtrust.provenance.keys import generate_keypair, load_private_key
+
+    _, info = generate_keypair(
+        private_path=tmp_path / "k.pem", passphrase="pw", label="offline"
+    )
+    assert info.key_id
+    assert load_private_key(tmp_path / "k.pem", "pw")
+
+
+def test_signing_and_verification_work_offline(no_network):
+    from cvtrust.provenance.binding import (
+        ModelBinding,
+        bind_config,
+        bind_input_bytes,
+        bind_output,
+    )
+    from cvtrust.provenance.keys import generate_keypair
+    from cvtrust.provenance.output import classification_output
+    from cvtrust.provenance.record import create_provenance_record
+    from cvtrust.provenance.signing import sign_record, verify_signature
+
+    key, _ = generate_keypair()
+    record = create_provenance_record(
+        input_binding=bind_input_bytes(b"offline-image"),
+        model_binding=ModelBinding(
+            model_id="m", file_sha256="a" * 64, model_format="onnx"
+        ),
+        preprocessing=bind_config({"resize": [32, 32]}),
+        inference=bind_config({"top_k": 1}),
+        output=bind_output(classification_output({"defect": 0.9})),
+        log_id="offline",
+    )
+    assert verify_signature(sign_record(record, key)).valid
+
+
+def test_trust_and_revocation_need_no_revocation_service(no_network, tmp_path):
+    """No CA, no OCSP, no CRL fetch. Trust is a local administrative record."""
+    from cvtrust.provenance.keys import generate_keypair
+    from cvtrust.provenance.trust import KeyStatus, TrustStore, revoke_key, trust_key
+
+    _, info = generate_keypair()
+    store = trust_key(
+        TrustStore.empty(), public_key=info.public_key_hex, provenance="courier"
+    )
+    store.save(tmp_path / "trust.json")
+    reloaded = TrustStore.load(tmp_path / "trust.json")
+    assert reloaded.status_of(info.key_id) is KeyStatus.TRUSTED
+    assert revoke_key(reloaded, info.key_id, reason="offline test").status_of(
+        info.key_id
+    ) is KeyStatus.REVOKED
+
+
+@pytest.mark.slow
+def test_a_full_log_verification_completes_with_no_network(no_network, tmp_path):
+    from cvtrust.attack_lab.provenance_attacks import build_clean
+    from cvtrust.core.config import Config
+    from cvtrust.provenance.chain import build_anchor
+    from cvtrust.provenance.replay import ReplayDatabase
+    from cvtrust.provenance_pipeline import verify_log
+
+    clean = build_clean(tmp_path / "lab", seed=7, record_count=6)
+    report, _, database = verify_log(
+        clean.log,
+        Config(),
+        trust_store=clean.trust_store,
+        replay_database=ReplayDatabase.empty(),
+        anchor=build_anchor(clean.log.entries),
+    )
+    assert report.report_id
+    assert report.summary.overall == "PROVENANCE VERIFIED"
+    assert database is not None and len(database) == 6
+
+
+@pytest.mark.slow
+def test_chain_and_replay_detection_work_offline(no_network, tmp_path):
+    from cvtrust.attack_lab.provenance_attacks import build_clean
+    from cvtrust.provenance.chain import verify_chain
+    from cvtrust.provenance.replay import ReplayDatabase, ReplayVerdict
+
+    clean = build_clean(tmp_path / "lab", seed=8, record_count=6)
+    assert verify_chain(clean.log.entries).intact
+    assert not verify_chain(list(reversed(clean.log.entries))).intact
+
+    database = ReplayDatabase.empty().record(clean.log.entries[0])
+    assert database.check(clean.log.entries[0]).verdict is ReplayVerdict.REPLAY_EXACT
+
+
+@pytest.mark.slow
+def test_the_provenance_lab_builds_and_evaluates_offline(no_network, tmp_path):
+    from cvtrust.attack_lab.provenance_attacks import build_lab
+    from cvtrust.attack_lab.provenance_evaluate import evaluate_lab
+    from cvtrust.core.config import Config
+
+    build_lab(tmp_path / "lab", seed=9, record_count=6)
+    assert evaluate_lab(tmp_path / "lab", Config()).all_passed
+
+
+def test_no_provenance_module_imports_a_certificate_or_key_fetching_api():
+    """The specific APIs that would turn this into an online verifier."""
+    forbidden = (
+        "ocsp", "crl_distribution", "load_pem_x509_certificate", "x509.ocsp",
+        "keyserver", "hkp://", "timestamp_authority", "rfc3161",
+    )
+    offenders: list[str] = []
+    for path in _python_sources():
+        if "provenance" not in str(path):
+            continue
+        text = path.read_text(encoding="utf-8")
+        for needle in forbidden:
+            if needle in text:
+                offenders.append(f"{path.name}: {needle}")
+    assert not offenders, (
+        "online certificate/key/timestamp APIs in the provenance module: "
+        + "; ".join(offenders)
+    )
+
+
+def test_the_only_cryptography_imported_is_the_vendored_library():
+    """No invented primitives, and no second crypto stack to audit."""
+    import ast
+
+    allowed_roots = {"hashlib", "secrets", "cryptography"}
+    seen: set[str] = set()
+    for path in _python_sources():
+        if "provenance" not in str(path):
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    root = alias.name.split(".")[0]
+                    if root in {"hashlib", "secrets", "cryptography", "nacl", "Crypto"}:
+                        seen.add(root)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                root = node.module.split(".")[0]
+                if root in {"hashlib", "secrets", "cryptography", "nacl", "Crypto"}:
+                    seen.add(root)
+    assert seen <= allowed_roots, f"unexpected crypto imports: {seen - allowed_roots}"
+    assert "cryptography" in seen
+
+
+def test_the_provenance_lab_key_derivation_is_confined_to_the_lab():
+    """A key derived from a published seed must never reach the shipped path."""
+    offenders: list[str] = []
+    for path in _python_sources():
+        text = path.read_text(encoding="utf-8")
+        if "from_private_bytes" not in text:
+            continue
+        if path.name != "provenance_attacks.py":
+            offenders.append(path.name)
+    assert not offenders, (
+        "seed-derived Ed25519 keys outside the attack lab: " + "; ".join(offenders)
+    )

@@ -6,7 +6,10 @@
 |---|---|
 | SHA-256 is the only digest used for identity or integrity | `core/hashing.py`; `HASH_ALGORITHM` recorded in every manifest |
 | **MD5 and SHA-1 appear nowhere**, including for "convenience" keys | A convenience key becomes an identity eventually; there are none to promote |
-| No invented cryptography | Only `hashlib` and (from Module 3) `cryptography`'s Ed25519 |
+| No invented cryptography | Only `hashlib`, `secrets` and `cryptography`'s Ed25519. Asserted by a test that scans every `provenance/` module for any other crypto import |
+| Ed25519 for signatures, nothing else | `provenance/signing.py`; an envelope declaring another algorithm is refused rather than attempted |
+| A signature establishes authorship, never authority | The public key travels in the envelope, so validity alone proves nothing. Trust comes from the trust store — see `docs/cryptographic-model.md` §4 |
+| No online verification of anything | No CA, OCSP, CRL, key server or RFC 3161 timestamp authority. Asserted statically and dynamically |
 | Canonical serialisation before hashing | `core/canonical.py` |
 | Digest-bearing structures are float-free | `canonical_json` raises on `float` by default (ADR-004) |
 | Truncated digests are labels, never proofs | `short()` is used for display and finding IDs only; every integrity comparison uses the full 64 hex characters |
@@ -27,8 +30,13 @@ representation on every machine and Python version. `canonical_json` guarantees:
   anything else is an error rather than a silent `str()`
 
 **Floats are rejected on the digest path.** RFC 8785 number canonicalisation is
-implementable but subtle, and every subtlety becomes a signature-verification
-bug once Module 3 signs these structures. Configuration and reports, which
+implementable but subtle, and every subtlety would have become a
+signature-verification bug once Module 3 signed these structures. Module 3 now
+does sign them, and the decision held: no float has ever reached a signature.
+Confidences, box coordinates and configuration values are quantised onto a fixed
+decimal grid and carried as integers, with the number of places recorded inside
+the signed structure so the grid is part of what was signed rather than a
+convention two implementations might disagree about. Configuration and reports, which
 legitimately contain thresholds and scores, are hashed through `digest_safe()`,
 which rewrites floats as fixed-unit integers. Sixteen tests in
 `tests/unit/test_canonical.py` pin this behaviour.
@@ -39,6 +47,13 @@ which rewrites floats as fixed-unit integers. Sixteen tests in
 |---|---|---|
 | `file_sha256` — over bytes on disk | "Is this the same *artifact*?" | any re-encode, metadata strip, container change |
 | `pixel_sha256` — over decoded RGB pixels, with shape/dtype/mode bound in | "Is this the same *content*?" | any pixel change |
+
+The same split runs through Module 3: `raw_input_digest` over the input bytes and
+`normalized_input_digest` over the preprocessed tensor answer different
+questions, are separate fields, and one is never silently substituted for the
+other. The raw digest changes when a JPEG is re-encoded and the pixels do not;
+the normalised digest changes when the preprocessing changes and the file does
+not.
 
 An adversary who knows only byte hashing is used will re-encode. The file digest
 then reports nothing while the training set is just as skewed. Content digests
@@ -77,6 +92,10 @@ The dataset root is untrusted input and is treated as such:
 | Remote database | None. No database at all; artifacts are files. |
 | Authentication service | None. |
 | Telemetry | None. |
+| Certificate authority / PKI / OCSP / CRL | **None.** Trust is a local administrative record. Asserted by a test that scans the provenance modules for those APIs. |
+| Remote timestamp authority (RFC 3161) | **None.** A timestamp is reported as a producer's claim, never as proof of time. |
+| Key server or key directory | **None.** Keys are generated locally and provisioned by the operator out of band. |
+| Blockchain / distributed ledger | **None**, by decision (ADR-009), not by omission. |
 
 Installation requires a package index. Runtime does not. See
 `docs/deployment.md`.
@@ -104,14 +123,40 @@ Each of these makes the tool *less* likely to act, on purpose:
 8. **Overall assessment is a worst-case roll-up, never an average.** One
    confident HIGH finding among a thousand clean samples is the case that
    matters, and any mean would bury it.
+9. **Writing an unencrypted private key requires an explicit opt-in.** An
+   unencrypted operational signing key should be a decision someone made, not a
+   default they inherited. Mirrors Module 2's
+   `allow_unsafe_deserialisation`.
+10. **A provenance check that could not run is never a pass, and never a
+   quarantine.** An absent trust store, replay database, anchor or expectation
+   degrades its attack class to `NOT_ASSESSED`, and rule `D-000-not-assessed`
+   makes the resulting finding `REVIEW` — so a missing input cannot quarantine a
+   pipeline, and cannot be mistaken for a clean result either.
 
 ## Known security limitations
 
-- Until Module 3, manifests are unsigned. A manifest stored *alongside* the
-  dataset could be replaced wholesale by an adversary with write access —
-  manifest self-tampering is detected, but wholesale replacement with a
-  self-consistent forgery is not. **Store baseline manifests separately from the
-  dataset.**
+- **Manifests themselves are still not signed by default.** Module 3 makes it
+  possible — a manifest digest can be bound into a signed provenance record, and
+  `ExpectedBinding.from_model_manifest` is the join — but `cvtrust dataset
+  manifest` and `cvtrust model manifest` still write plain JSON. A manifest
+  stored *alongside* the artifact it describes can therefore still be replaced
+  wholesale by an adversary with write access: self-tampering is detected,
+  wholesale replacement with a self-consistent forgery is not. **Store baseline
+  manifests separately from the artifacts they describe.** Wiring signing into
+  those two commands is an open item, deliberately not done under a
+  provenance brief.
+- **A private key is not protected from a compromised host.** This software is a
+  process reading a file; an adversary with code execution as the signing user
+  can read the key, or simply ask this software to sign. Passphrase encryption
+  and `0600` permissions raise the bar against a careless copy, not against a
+  compromise. An HSM is the correct answer and is not integrated. See
+  `docs/cryptographic-model.md` §5.
+- **Trust is only as good as the channel each key came through.** A trust store
+  populated from the same source that supplied the records establishes nothing.
+  This is recorded per key in a `provenance` field, printed in every finding's
+  assumptions, and warned about by the CLI when left empty.
+- **Tail truncation of a provenance log is undetectable without an anchor**, and
+  an anchor stored beside the log it anchors protects against nothing.
 - Contributor attribution rests on untrusted metadata (see
   `docs/threat-model.md` §4).
 - The tool trusts its own configuration file. Protect it with filesystem

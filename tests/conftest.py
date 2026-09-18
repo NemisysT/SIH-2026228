@@ -190,3 +190,120 @@ def pytest_unconfigure(config):
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(status)
+
+
+# ---------------------------------------------------------------------------
+# Module 3 fixtures
+#
+# The provenance lab is cheap relative to the other two — it signs a few dozen
+# records and touches no model runtime — so it is built once per session purely
+# to avoid repeating the work, not because it is slow.
+# ---------------------------------------------------------------------------
+
+#: Records in the lab's clean baseline. Six is the smallest size at which every
+#: structural scenario is expressible: a genesis, an interior edit with a
+#: successor, a deletion with records either side, and a head.
+PROVENANCE_RECORDS = 6
+
+
+@pytest.fixture(scope="session")
+def provenance_lab(tmp_path_factory: pytest.TempPathFactory):
+    """The built provenance attack lab: clean baseline plus every scenario."""
+    from cvtrust.attack_lab.provenance_attacks import build_lab
+
+    out = tmp_path_factory.mktemp("provenance_lab")
+    clean, scenarios = build_lab(out, seed=SEED, record_count=PROVENANCE_RECORDS)
+    return {
+        "root": out,
+        "clean": clean,
+        "scenarios": {s.name: s for s in scenarios},
+    }
+
+
+@pytest.fixture
+def signing_key():
+    """An in-memory Ed25519 keypair. Never written to disk."""
+    from cvtrust.provenance.keys import generate_keypair
+
+    return generate_keypair(label="test-signer")
+
+
+@pytest.fixture
+def trust_store_with(signing_key):
+    """A trust store trusting the ``signing_key`` fixture."""
+    from cvtrust.provenance.trust import TrustStore, trust_key
+
+    _, info = signing_key
+    return trust_key(
+        TrustStore.empty(),
+        public_key=info.public_key_hex,
+        label="test-signer",
+        provenance="constructed in-process by the test fixture",
+    )
+
+
+@pytest.fixture
+def make_record():
+    """Factory for a minimal, valid provenance record.
+
+    Keyword arguments override any part of it, so a test that cares about one
+    field does not have to restate the other nine.
+    """
+    from cvtrust.provenance.binding import (
+        ModelBinding,
+        bind_config,
+        bind_input_bytes,
+        bind_output,
+    )
+    from cvtrust.provenance.output import classification_output
+    from cvtrust.provenance.record import create_provenance_record
+
+    def _make(
+        *,
+        payload: bytes = b"test-image-bytes",
+        scores: dict[str, float] | None = None,
+        preprocessing: dict | None = None,
+        inference: dict | None = None,
+        log_id: str = "test-log",
+        sequence_number: int = 0,
+        previous_record_digest: str | None = None,
+        **kwargs,
+    ):
+        return create_provenance_record(
+            input_binding=bind_input_bytes(payload, locator="test.png"),
+            model_binding=ModelBinding(
+                model_id="M-test", file_sha256="a" * 64, graph_digest="b" * 64,
+                parameter_digest="c" * 64, parameter_count=100,
+                model_format="onnx", declared_name="detector_v3",
+            ),
+            preprocessing=bind_config(preprocessing or {"resize": [32, 32]}),
+            inference=bind_config(inference or {"threshold": 0.5}),
+            output=bind_output(
+                classification_output(scores or {"defect": 0.9, "clean": 0.1})
+            ),
+            log_id=log_id,
+            sequence_number=sequence_number,
+            previous_record_digest=previous_record_digest,
+            **kwargs,
+        )
+
+    return _make
+
+
+@pytest.fixture
+def signed_log(signing_key, make_record):
+    """A four-entry signed, chained log."""
+    from cvtrust.provenance.log import ProvenanceLog
+
+    key, _ = signing_key
+    provenance_log = ProvenanceLog.new("test-log")
+    for index in range(4):
+        provenance_log.append_signed(
+            lambda sequence_number, previous_record_digest, index=index: make_record(
+                payload=f"image-{index}".encode(),
+                sequence_number=sequence_number,
+                previous_record_digest=previous_record_digest,
+            ),
+            key,
+        )
+    return provenance_log

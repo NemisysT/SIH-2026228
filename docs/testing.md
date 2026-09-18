@@ -120,19 +120,70 @@ valuable as one that asserts a capability works.
 | `tests/regression/test_model_determinism.py` | Two assessments agree on `report_id`; only declared volatile fields differ; and **cross-process** determinism of both a full assessment and model training, via subprocess. |
 | `tests/security/test_offline.py` | The offline guarantee, two independent ways. |
 
+## Module 3 test layers
+
+Module 3 adds **258 tests** (579 total). The organising principle is the same,
+with one addition specific to a deterministic module: **there is nothing here to
+calibrate, so the lab is scored by exact set equality rather than by precision
+and recall.** A verifier that raises an extra failure fails a scenario as hard as
+one that misses a failure.
+
+| File | What it protects |
+|---|---|
+| `tests/unit/test_provenance_record.py` | Canonicalisation, which everything else rests on: equivalent outputs produce identical bytes regardless of emission order or dict key order; tied scores still get a total order; keypoints order by index, not by score; the label vocabulary is bound; masks bind shape and label map; the digest surface is asserted float-free on a real record; `entry_digest` is shown to cover the signature, not only the payload. |
+| `tests/unit/test_provenance_keys.py` | The key lifecycle and the rule that **validity and trust are different claims**: the three signature failure modes are distinguished (missing / malformed / invalid); an envelope naming a key it does not carry is malformed; an unencrypted key needs an explicit opt-in and is written `0600`; revocation preserves history and requires a reason; a trust store whose ids do not fingerprint its keys is refused at load. |
+| `tests/unit/test_provenance_chain.py` | The chain as a table of structural attacks, each asserted individually — including the two that matter most: **tail truncation is not self-detectable** (asserted, with the anchor then detecting it) and an edit breaks *exactly* its successor link, which is what makes a break position readable as a diagnosis. Plus the replay database's four verdicts and the log loader's tolerance of one bad line. |
+| `tests/integration/test_provenance_pipeline.py` | Create → sign → verify end to end; key rotation across a log; the coverage degradation when an input is absent; and the ADR-014 assertions — every finding `DETERMINISTIC` at 1.0, no aggregate score anywhere in the schema, and a verified chain saying nothing about model quality. Two `slow` tests bind a **real Module 2 ONNX manifest** and a **real Module 1 corpus image**, so the cross-module join is exercised rather than assumed. |
+| `tests/security/test_provenance_attacks.py` | All 28 lab scenarios, parametrised one test each, asserted against ground truth held outside the verified artifacts. Plus the properties a per-position failure set cannot express: that an adversary with a key is caught *only* by trust and expectation; that a deleted record is invisible without the chain; that a truncated log is invisible without an anchor; and all three replay cases from the brief. |
+| `tests/adversarial/test_provenance_evasion.py` | Attempts in **both** directions — making two different records share bytes, and making two identical records differ. Ordering rotations, JSON key rotation, whitespace, `0.1+0.2` against `0.3`, `-0.0`, non-finite scores, Unicode NFC/NFD, a label containing JSON syntax, a label containing the quantisation marker, duplicate JSON keys, unknown fields, 2000-detection outputs, six unusual timestamps, and deliberate nonce reuse. |
+| `tests/regression/test_provenance_determinism.py` | Records, signatures, the clean baseline and the **whole 28-scenario lab** are byte-reproducible from a seed; verification reports agree on `report_id` across runs; a changed configuration changes the run id; every log line is canonical JSON, so two logs can be diffed meaningfully. |
+| `tests/integration/test_cli.py` | The provenance command surface, including the full documented lifecycle (keygen → trust → record → anchor → verify-log) as a subprocess, and the three exit codes. |
+
+### Scoring the provenance lab
+
+`cvtrust lab provenance-evaluate` compares each scenario's observed failure
+codes against its declared ones, **per record, per position**, as sets. 28/28
+reproduce exactly. There is no threshold to tune and no calibration table is
+produced — Module 3's findings are `DETERMINISTIC` at confidence 1.0, and
+calibrating an equality test would be a number pretending to be a measurement.
+
+Writing those expectations is where the work was: the first run disagreed with
+reality on fifteen scenarios, because chain breaks **localise** to the successor
+link rather than propagating, and because an interior edit leaves the head and
+count intact so the anchor still verifies. Both are correct behaviour and better
+diagnostics than what had been assumed, and the expectations were corrected to
+match. Four scenarios are deliberately *not* attacks — `clean`, `key_rotation`,
+`legitimate_reprocess` and (in a different sense) `modified_model_artifact` —
+because a lab containing only attacks measures nothing.
+
+### The lab's two test-only constructions
+
+Signing keys derived from a published seed, and deterministic nonces. Both exist
+so the lab is byte-reproducible; a key derived from a published seed is a key
+every reader of the source already has. A test asserts that
+`from_private_bytes` appears in **no shipped module but the lab**, so the
+construction cannot leak into the production path.
+
 ### The offline test, specifically
 
 Both halves are necessary and neither is sufficient:
 
 1. **Dynamic** — `socket.socket`, `socket.create_connection` and
    `socket.getaddrinfo` are replaced with functions that raise, and a full
-   dataset scan, a full ONNX model assessment, the TorchScript gradient pathway
-   and a model training run are executed through them.
+   dataset scan, a full ONNX model assessment, the TorchScript gradient pathway,
+   a model training run and — added for Module 3 — key generation, signing,
+   verification, chain verification, replay detection, trust and revocation, and
+   a full build-and-evaluate of the 28-scenario provenance lab are executed
+   through them.
 2. **Static** — the shipped source is parsed and asserted to contain no import
    of a network module, no URL literal, and no call to `torch.hub`,
    `load_state_dict_from_url`, `from_pretrained`, `hf_hub_download`,
    `snapshot_download` or `urlretrieve`, and no `torchvision.models(weights=…)`
-   with anything other than `None`.
+   with anything other than `None`. Module 3 adds three more static assertions:
+   no certificate, OCSP, CRL, key-server or RFC 3161 timestamp API appears
+   anywhere under `provenance/`; no crypto library other than `hashlib`,
+   `secrets` and `cryptography` is imported there; and seed-derived signing keys
+   are confined to the attack lab.
 
 The dynamic half cannot catch a download path that simply was not exercised;
 the static half cannot catch an indirect call. Together they are a reasonable
@@ -167,7 +218,7 @@ These exist so that a documented boundary and the code cannot drift apart:
 ### Running them
 
 ```bash
-./.venv/bin/pytest                               # 321 tests, ~2 min 45 s
+./.venv/bin/pytest                               # 579 tests, ~3 min
 ./.venv/bin/pytest -m "not slow"                 # fast subset
 ./.venv/bin/pytest tests/security                # the offline guarantee
 ./.venv/bin/pytest -m adversarial                # evasion and boundary tests
@@ -175,7 +226,9 @@ These exist so that a documented boundary and the code cannot drift apart:
 
 The model-lab fixture is session-scoped and trains six small networks once;
 training is deterministic, so sharing it across tests costs nothing in
-isolation. Tests skip cleanly when no model runtime is installed, so the
+isolation. The provenance-lab fixture is session-scoped for the same reason,
+though it is cheap — it signs a few dozen records and touches no model
+runtime. Tests skip cleanly when no model runtime is installed, so the
 optional extras stay genuinely optional.
 
 ### A native-runtime teardown race, and how it is handled

@@ -3,11 +3,22 @@
 venv/
 
 # Generated artifacts. All are reproducible from published seeds
-# (scripts/evaluate.sh, scripts/model-evaluate.sh), so they are not
-# version-controlled. model_lab/ additionally contains trained model weights.
+# (scripts/evaluate.sh, scripts/model-evaluate.sh,
+# scripts/provenance-evaluate.sh), so they are not version-controlled.
+# model_lab/ additionally contains trained model weights, and
+# provenance_lab/ contains private keys -- test-only ones, derived from a
+# published seed, but private keys nonetheless, and a key material file that
+# looks committable is a habit worth not forming.
 attack_lab/
 model_lab/
+provenance_lab/
 reports/
+
+# Operational key material and verifier state. Never version-controlled.
+keys/
+*.pem
+trust_store.json
+replay.json
 datasets/*
 !datasets/.gitkeep
 models/*

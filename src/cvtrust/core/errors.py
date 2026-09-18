@@ -39,3 +39,24 @@ class DetectorUnavailable(CvTrustError):
 
 class VerificationError(CvTrustError):
     """An integrity verification (manifest re-check, digest match) failed."""
+
+
+class ProvenanceError(CvTrustError):
+    """A provenance record, log or trust store is structurally unusable.
+
+    Deliberately distinct from a *verification failure*: a record that fails
+    verification is a normal, reportable outcome carrying structured evidence,
+    not an exception.  This is raised only when the artifact cannot be parsed
+    far enough to be verified at all, and the caller is required to report that
+    as ``MALFORMED_RECORD`` rather than as an absence of findings.
+    """
+
+
+class KeyError_(CvTrustError):
+    """A signing or verification key cannot be loaded, decoded or used."""
+
+
+#: Public name for the key error.  ``KeyError`` is a builtin, and shadowing it
+#: inside a package that also does dictionary lookups is a bug generator, so the
+#: class is defined under a private name and exported under a qualified one.
+KeyMaterialError = KeyError_

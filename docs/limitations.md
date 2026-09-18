@@ -5,10 +5,10 @@ report; this is the complete list.
 
 ## 1. Scope of this build
 
-**Modules 1 and 2 of 5 are implemented.** Inference provenance,
-distribution-shift characterisation and the analyst web UI do not exist yet.
-They are declared `NOT_ASSESSED` in the coverage statement of every report, with
-the owning module named — not silently omitted.
+**Modules 1, 2 and 3 of 5 are implemented.** Distribution-shift
+characterisation and the analyst web UI do not exist yet. They are declared
+`NOT_ASSESSED` in the coverage statement of every report, with the owning module
+named — not silently omitted.
 
 A clean report is a statement about the attack classes marked `SUPPORTED` or
 `PARTIAL` in `docs/coverage.md`, and about nothing else.
@@ -17,6 +17,13 @@ A clean report is a statement about the attack classes marked `SUPPORTED` or
 positive statement available is `NO_ANOMALY_DETECTED`, which is a statement
 about the tests that ran under the recorded access mode and probe battery, not
 about the model. This is enforced by a test, not by review.
+
+**A provenance report never states that an inference was correct.**
+`PROVENANCE VERIFIED` is a statement about the integrity of the *records* and
+about the checks that actually ran. A cryptographically perfect chain over a
+backdoored model is entirely possible, and so is a forged record of a sound one;
+the system keeps both facts alive independently and never combines them into a
+single number (ADR-014).
 
 ## 2. What a finding is, and is not
 
@@ -141,13 +148,58 @@ the synthetic classes are more separable in the classical feature space than
 real aerial or ground imagery would be. Expect the label and OOD detectors to
 perform worse on real data, and recalibrate.
 
+## 7a. Inference provenance limitations (Module 3)
+
+Full detail in `docs/provenance.md` §11 and `docs/threat-model.md`. The ones
+that change what an operator should do:
+
+- **A valid signature does not establish authority.** The public key travels
+  inside the record, so anyone can produce a record that verifies. Trust comes
+  from the trust store and nowhere else — and **a trust store populated through
+  the same channel as the records establishes nothing.** That assumption is the
+  foundation of the whole module and it is printed in every finding.
+- **A valid record does not establish that the inference ran.** Binding proves
+  the record *describes* these artifacts. A producer able to sign can sign a
+  record for a forward pass that never happened. Detecting that needs trusted
+  execution, which is not implemented and not claimed.
+- **A timestamp is a claim, not a time.** There is no timestamp authority
+  offline, and a key holder controls the clock too. Under the default
+  `at_record_timestamp` validity policy this means an expired key can be revived
+  by backdating; `at_verification_time` is immune and invalidates every expired
+  key's history instead. The policy is configurable and recorded in every
+  verification.
+- **Tail truncation is undetectable without an anchor.** A truncated chain is
+  internally perfect. Front truncation *is* detected. An anchor stored beside the
+  log it anchors protects against nothing.
+- **Replay detection is only as good as the local database.** Delete or roll it
+  back and every record becomes first-seen again; prune it and older replays
+  become undetectable; run two verifiers and each accepts replays the other would
+  catch. There is no shared state, by decision (ADR-009).
+- **A replayed record cannot be distinguished from the original if it is seen
+  first.** Presentation order is not locally establishable.
+- **Two outputs closer than 10⁻⁶ share a digest.** The quantisation grid is a
+  stated, tested limitation; `output_quantization_places` raises it and changes
+  the record visibly.
+- **Unicode is not normalised.** NFC and NFD forms of the same label get
+  different digests. Normalise before binding if a deployment needs them unified.
+- **Masks are bound by digest, not embedded.** The record establishes which mask
+  was produced; re-deriving the digest needs the mask artifact.
+- **Chain verification is O(n)** and re-hashes every entry, so an unbounded log
+  verifies proportionally more slowly. Anchor and rotate rather than verify less.
+
 ## 8. Cryptographic and operational limitations
 
-- **Manifests are unsigned until Module 3.** Manifest *self*-tampering is
-  detected, but an adversary with write access could replace a manifest stored
-  alongside the dataset or model with a self-consistent forgery. **Store
-  baseline manifests separately.** This applies to model manifests exactly as it
-  does to dataset manifests.
+- **Manifests are still written unsigned.** Module 3 makes signing them possible
+  — a manifest digest binds into a signed provenance record — but `cvtrust
+  dataset manifest` and `cvtrust model manifest` still emit plain JSON. Manifest
+  *self*-tampering is detected, but an adversary with write access could replace
+  a manifest stored alongside the dataset or model with a self-consistent
+  forgery. **Store baseline manifests separately.** Wiring signing into those two
+  commands is an open item, deliberately not undertaken under a provenance brief.
+- **This software cannot protect a private key from a compromised host.** It is
+  a process reading a file. Passphrase encryption and `0600` permissions raise
+  the bar against a careless copy, not against a compromise. Hardware-backed key
+  storage is the correct answer and is not integrated.
 - **A reference model is a trust assumption, not a fact.** Every
   reference-dependent model claim assumes the reference came through a channel
   independent of the one that supplied the artifact under assessment.
@@ -183,3 +235,10 @@ It does not claim that any model is safe. It claims that specified tests ran
 under a recorded access mode against a recorded probe battery, and reports what
 they found — including, in two documented cases, that a published method did not
 work here and was demoted rather than shipped firing incorrectly.
+
+It does not claim that a verified provenance chain means an inference was
+trustworthy. It claims that the records were not altered, that they were signed
+by keys the operator chose to trust, and that the log has not been restructured
+— each of those bounded by what the operator actually supplied, with every
+unassessed check named in the report's verification matrix rather than left to
+be inferred.

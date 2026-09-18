@@ -27,9 +27,11 @@ by `cvtrust info` — is what makes the difference visible.
 | `metadata_inconsistency` | **SUPPORTED** | 1 | `integrity` | Deterministic; detects contradictions within the dataset, not a consistent lie. |
 | `dataset_tamper` | **SUPPORTED** | 1 | `cvtrust dataset verify` | Needs a manifest from before the tampering. Assessed by a separate command because it is the only class here requiring a second observation in time. |
 | `trigger_injection` | `NOT_ASSESSED` | 2 | — | **Still open.** ADR-008 deferred *data-side* trigger detection to Module 2; Module 2 delivered the model side in full and deliberately did not add a dataset-image detector, which would be scope drift. Listed as an open item, not dropped. See ADR-011. |
-| `inference_tampering` | `NOT_ASSESSED` | 3 | — | |
-| `inference_replay` | `NOT_ASSESSED` | 3 | — | |
-| `record_reordering` | `NOT_ASSESSED` | 3 | — | |
+| `inference_tampering` | `NOT_ASSESSED` | 3 | — | Owned by Module 3 and assessed by `cvtrust provenance verify-log`, not by a dataset scan. |
+| `inference_replay` | `NOT_ASSESSED` | 3 | — | Same. |
+| `record_reordering` | `NOT_ASSESSED` | 3 | — | Same. |
+| `provenance_key_trust` | `NOT_ASSESSED` | 3 | — | Same. |
+| `chain_truncation` | `NOT_ASSESSED` | 3 | — | Same. |
 | `distribution_shift` | `NOT_ASSESSED` | 4 | — | Population-level shift and the drift-vs-manipulation distinction. Module 1 scores individual samples only. |
 
 ## Module 2 — model forensics and backdoor assurance
@@ -86,6 +88,71 @@ Verify this table against the running build:
 cvtrust info
 ```
 
+## Module 3 — inference provenance and cryptographic integrity
+
+Full detail is in `docs/provenance.md`. Every coverage value here is
+**conditional on what the operator supplied**, which is the defining property of
+this module's coverage: four of the five classes degrade to `NOT_ASSESSED` when
+their precondition is absent, and a finding raised by a check that could not run
+is dispositioned `REVIEW` by rule `D-000-not-assessed` rather than quarantining a
+pipeline over a missing input.
+
+| Attack class | With everything supplied | Degraded to | When |
+|---|---|---|---|
+| `inference_tampering` | **SUPPORTED** | `PARTIAL` | No independent expectation (input artifact, model manifest, configuration or output). Only internal consistency and signatures were checked, and a forger holding a key can emit a consistent record about the wrong artifacts |
+| `inference_replay` | **PARTIAL** | `NOT_ASSESSED` | No replay database. A valid signature does not establish that an inference happened once |
+| `record_reordering` | **SUPPORTED** | — | Never degrades: linkage and sequence need nothing but the log |
+| `provenance_key_trust` | **PARTIAL** | `NOT_ASSESSED` | No trust store. Every key is `UNKNOWN` and authenticity was not assessed |
+| `chain_truncation` | **PARTIAL** | `NOT_ASSESSED` | No log anchor. Tail truncation is structurally undetectable from the log; front truncation is detected either way |
+
+`inference_replay`, `provenance_key_trust` and `chain_truncation` are `PARTIAL`
+even at their best, and the reasons are specific rather than decorative:
+
+- **replay** is bounded by the local database's retention and by the integrity of
+  that database, which an adversary with write access to the verifying host
+  could roll back;
+- **key trust** is an administrative fact whose guarantee is only as strong as
+  the channel through which each key was obtained;
+- **truncation** is assessed only for entries written before the anchor was
+  taken.
+
+### Provenance coverage matrix
+
+| Attack | Detected | By what |
+|---|---:|---|
+| Edit any bound field without a key | ✓ | Ed25519 over canonical bytes |
+| Edit and re-sign with an adversary key | ✓ | Trust store **and** the independent expectation — neither alone |
+| Replace the model artifact under a genuine log | ✓ | Expectation re-derived from disk |
+| Rewrite preprocessing or inference configuration | ✓ | Configuration binding, plus record self-consistency |
+| Rewrite the output | ✓ | Output binding, self-consistency, expectation |
+| Delete / insert / reorder / duplicate a record | ✓ | Hash-chain linkage + contiguous sequence |
+| Strip or swap a signature on a chained record | ✓ | `entry_digest` covers the envelope |
+| Re-present a genuine record | partial | Local replay database, within retention |
+| Nonce reuse, sequence collision | ✓ | Replay database |
+| Unknown / revoked / expired / wrong-purpose key | ✓ | Trust store |
+| Envelope naming a key it does not carry | ✓ | Key-id consistency, checked before trust lookup |
+| Unsupported schema version | ✓ | Refused, never guessed |
+| Unparseable log line | ✓ | Reported as a finding; the rest of the log still verifies |
+| **Front** truncation | ✓ | Genesis rule |
+| **Tail** truncation | anchor only | Out-of-band head digest |
+| Appending to an anchored log | not an attack | Reported `ANCHOR_STALE`, no finding raised |
+| Signing a record for an inference that never ran | ✗ | **Not supported.** Needs trusted execution |
+| Backdating into a retired key's window | partial | Policy-dependent; `at_verification_time` is immune |
+| A compromised signing host | ✗ | **Not supported.** It can sign anything, correctly |
+| A trust store filled from the same channel as the records | ✗ | **Not supported.** The assumption the module rests on |
+
+### Scoring, and why there is no calibration table
+
+Modules 1 and 2 measure precision and recall because their detectors produce
+scores. Module 3 produces none: a signature verifies or it does not. The lab's
+28 scenarios are scored by **exact set equality** between expected and observed
+failure codes, per record — an extra failure fails as hard as a missed one — and
+28/28 reproduce exactly.
+
+No calibration table exists for Module 3 and none will. Every finding is
+`DETERMINISTIC` at confidence 1.0, and calibrating an equality test would
+produce a number pretending to be a measurement.
+
 ## Confidence basis coverage
 
 Which detectors can produce which quality of confidence, in this build:
@@ -106,6 +173,7 @@ Which detectors can produce which quality of confidence, in this build:
 | `model_behaviour` | `HEURISTIC_UNCALIBRATED` (≤0.60) | `CALIBRATED` |
 | `model_activation` | `DETERMINISTIC` (1.0, INFO severity — context, not detection) | same |
 | `model_trigger` | `HEURISTIC_UNCALIBRATED` (≤0.60) | `CALIBRATED` |
+| `provenance_verifier` | `DETERMINISTIC` (1.0) | `DETERMINISTIC` (1.0) — there is no table, and there is nothing to calibrate |
 
 **Consequence to be aware of:** with no calibration table loaded, no
 threshold-based finding can recommend `QUARANTINE` — policy rule
@@ -133,3 +201,12 @@ Every report prints these limitations; `docs/limitations.md` is the full list.
 For Module 2 there is one further rule, enforced by a test: **no output ever
 states that a model is safe.** The strongest positive statement available is
 `NO_ANOMALY_DETECTED`, which is a statement about the tests that ran.
+
+For Module 3 the equivalent rule is narrower and stronger: `PROVENANCE VERIFIED`
+is a statement about the integrity of the *records*, and about the checks that
+actually ran — the report's verification matrix names every check that produced
+neither a pass nor a fail, so a reader can see the run's blind spots rather than
+infer their absence. It says nothing whatever about the quality of the
+inferences those records describe. A cryptographically perfect chain over a
+backdoored model is entirely possible, and the assurance system keeps both facts
+alive independently (ADR-014).

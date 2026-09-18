@@ -30,6 +30,24 @@ VOLATILE_FIELDS: tuple[str, ...] = (
     "started_at",
     "finished_at",
     "generated_at",
+    # Module 3: the verifier's own clock, in three places.
+    #
+    # ``verified_at`` is when a record was checked. ``first_seen_at`` and
+    # ``earliest_observation`` are when the replay database first saw something.
+    # ``evaluated_at`` is the moment a key's validity window was applied.
+    #
+    # All four are operationally useful and none of them is part of *what was
+    # verified*, exactly like ``observed_at`` on a finding. Two verifications of
+    # the same log seconds apart must produce the same report digest, or a
+    # reviewer cannot diff two runs and every determinism test becomes a clock
+    # race. Note that excluding the field is only half the job: a human-readable
+    # string that *quotes* one of these values would smuggle it back in, so the
+    # values live in ``observation`` (the reviewer's field) and not in
+    # ``statement`` or ``detail`` (the analyst's).
+    "verified_at",
+    "first_seen_at",
+    "earliest_observation",
+    "evaluated_at",
     "duration_ms",
     "timings_ms",
     "throughput_samples_per_s",

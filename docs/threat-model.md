@@ -81,7 +81,10 @@ Three mitigations:
    Tested (`test_spreading_an_attack_over_many_contributors_still_yields_findings`).
 
 Module 3 makes the sidecar signable, at which point `sidecar_signed` becomes the
-only strong attribution source.
+only strong attribution source. The mechanism now exists — a manifest digest can
+be bound into a signed provenance record — but wiring contributor sidecars
+through it is dataset-pipeline work that Module 3 did not undertake, so the
+attribution posture above is unchanged in this build.
 
 ## 5. Attacks on the detectors themselves
 
@@ -163,3 +166,119 @@ write access to the deployment, or a poisoned training pipeline upstream.
 - **Poisoning the reference.** An adversary who controls the reference controls
   every comparison. Store reference artifacts and their manifests separately
   from the artifacts under assessment.
+
+---
+
+## Module 3 — the inference provenance trust boundary
+
+**Trust boundary.**
+
+```
+┌─────────────────────────── UNTRUSTED ────────────────────────────┐
+│  provenance records and the log file they live in                │
+│  every field of every record, including timestamps and nonces    │
+│  the producer label, the host label, all execution metadata      │
+│  the declared model name and version inside a record             │
+│  the public key carried in a signature envelope                  │
+│  the input and model artifacts the records refer to              │
+└──────────────────────────────────────────────────────────────────┘
+                                │  read-only
+                                ▼
+┌──────────────────────────── TRUSTED ─────────────────────────────┐
+│  the verifying host, its filesystem and its clock                │
+│  the cvtrust code and its configuration                          │
+│  the trust store, and the channel each key in it came through    │
+│  the replay database                                             │
+│  any log anchor the analyst holds                                │
+│  expectations the analyst derived independently (M1/M2 manifests)│
+└──────────────────────────────────────────────────────────────────┘
+```
+
+Note what sits on the untrusted side: **the public key in the envelope**. It is
+read, it is used to check the signature, and it establishes nothing until the
+trust store says so.
+
+**Adversary.** Anyone who can write to a provenance log or the artifacts it
+refers to: a compromised inference host, an insider with filesystem access, a
+party in the transport path between the producer and the analyst, or a supplier
+handing over a log after the fact. Two variants are modelled throughout, and the
+distinction runs through every scenario in the lab:
+
+- the **unprivileged** adversary can edit the log but holds no signing key;
+- the **privileged** adversary holds a signing key — their own, a stolen one, or
+  a revoked one — and can emit records that verify.
+
+### Assumed adversary capabilities
+
+| # | Capability | Posture |
+|---|---|---|
+| P1 | Edit any field of any record without a key | **SUPPORTED** — the signature covers the canonical bytes. `modified_input_digest`, `modified_timestamp`, `modified_nonce` |
+| P2 | Swap the bound input digest and re-sign with their own key | **SUPPORTED** — `UNKNOWN_KEY`, plus `INPUT_MISMATCH` against the artifact the analyst holds |
+| P3 | Swap the bound model digest and re-sign | **SUPPORTED** — same two mechanisms. `modified_model_digest` |
+| P4 | Replace the model artifact on disk, leaving the log genuine | **SUPPORTED** — the expectation re-derived from disk contradicts every record. `modified_model_artifact` |
+| P5 | Rewrite preprocessing or inference configuration | **SUPPORTED** — the configuration is canonicalised and bound, and the inline copy makes the record self-verifying |
+| P6 | Rewrite the output | **SUPPORTED** — three independent checks fire |
+| P7 | Delete, insert, reorder or duplicate records | **SUPPORTED** — hash-chain linkage plus contiguous sequence numbers |
+| P8 | Strip or swap a signature on a chained record | **SUPPORTED** — `entry_digest` covers the envelope, not only the payload |
+| P9 | Re-present a genuine signed record | **PARTIAL** — detected by the local replay database, bounded by its retention |
+| P10 | Sign with a key the operator never authorised | **SUPPORTED** given a trust store; `NOT_ASSESSED` without one |
+| P11 | Sign with a revoked key | **SUPPORTED** — and whether the record *claims* to predate the revocation is reported separately, as a claim |
+| P12 | Backdate a record to fall inside a retired key's window | **PARTIAL** — see P17 |
+| P13 | Declare a schema version the verifier does not implement | **SUPPORTED** — refused rather than guessed |
+| P14 | Corrupt a log line to suppress verification of the rest | **SUPPORTED** — the loader keeps going and reports the line as a finding |
+| P15 | Name a trusted `key_id` while carrying another key | **SUPPORTED** — `MALFORMED_SIGNATURE`, and the trust lookup is *not* performed on the declared id |
+| P16 | Remove entries from the **front** of a log | **SUPPORTED** — genesis must carry a null back-pointer and sequence 0 |
+
+### Capabilities NOT defended against — stated up front
+
+| # | Capability | Why |
+|---|---|---|
+| P17 | **Tail truncation without an anchor** | A chain truncated at the end is internally perfect. No self-contained structure detects its own absence. With an anchor: **SUPPORTED**. Without: reported `NOT_DETECTABLE`, never clean |
+| P18 | **Signing a record for an inference that never ran** | The record would be entirely valid. Binding proves the record *describes* these artifacts, not that a forward pass happened. Detecting this needs trusted execution, which this build does not implement |
+| P19 | **Backdating under the `at_record_timestamp` policy** | The window is evaluated against the record's own clock, which a key holder also controls. `at_verification_time` is immune and invalidates every expired key's history instead; the policy is configurable and recorded in every verification |
+| P20 | **A compromised signing host** | It can sign anything, correctly. File permissions and passphrases do not change this. An HSM is the right answer and is not integrated |
+| P21 | **A trust store populated through the same channel as the records** | Every signature would verify against keys the adversary chose. This is *the* assumption the module rests on, and it is printed in every finding's assumptions |
+| P22 | **A rolled-back or deleted replay database** | Every record becomes first-seen again. The database must be protected at least as well as the log it guards |
+| P23 | **Seeing the replayed copy before the original** | A local database records the first presentation as original. Presentation order is not locally establishable |
+| P24 | **Two verifiers with separate replay databases** | Each will accept a replay the other would catch. There is no shared state — a shared ledger is what ADR-009 declined |
+| P25 | **Collision in SHA-256 or forgery against Ed25519** | Assumed hard. If either falls, every claim in this module falls with it |
+
+### Attacks on the verifier itself
+
+- **Denial of verification by one malformed byte.** A loader that aborted on a
+  bad line would let an adversary hide every finding in the rest of a log with a
+  single edit. The loader keeps going, counts the line, and reports it.
+- **Borrowing a trusted key's status.** A forged envelope naming a trusted
+  `key_id` while carrying another key would, under a naive implementation,
+  resolve the declared id and report `key_trusted: PASS` for a record that key
+  did not sign. The trust lookup is skipped entirely when the id does not
+  fingerprint the carried key. `key_id_forgery` in the lab.
+- **Making verification stop early.** No check short-circuits. A report showing
+  one failure would otherwise not distinguish "the rest was clean" from "the
+  rest was never examined".
+- **Exploiting a missing input to look clean.** An absent trust store, replay
+  database, anchor or expectation degrades the corresponding coverage to
+  `NOT_ASSESSED` and downgrades any finding that depended on it to `REVIEW` via
+  rule `D-000-not-assessed` — never to a pass, and never to a quarantine over an
+  input the operator simply did not supply.
+- **Quantisation-grid collision.** Two outputs closer than 10⁻⁶ share a digest.
+  Measured, tested and documented; a deployment needing finer resolution raises
+  `output_quantization_places`, which changes the record visibly.
+
+### The one that is not a threat
+
+**The same input legitimately processed twice.** Every real pipeline does this.
+It produces one subject key and two records with distinct nonces, sequences and
+signatures, and it is reported as `DUPLICATE_SUBJECT` at observation level —
+never as replay. A detector that called this an attack would be switched off
+within a day, and `legitimate_reprocess` in the lab asserts it produces zero
+findings.
+
+### Non-goals for this build
+
+- Trusted execution, remote attestation, or any proof that a forward pass
+  occurred (P18).
+- Hardware-backed key storage (P20).
+- Distributed consensus, shared ledgers or cross-verifier state (P24, ADR-009).
+- Population-level distribution-shift analysis (Module 4).
+- Any combination of a cryptographic verdict with an ML assessment (ADR-014).

@@ -15,6 +15,20 @@ from .model_report import (
     build_model_report,
     summarise_model,
 )
+from .provenance_render import (
+    render_provenance_evaluation,
+    render_provenance_markdown,
+    render_provenance_report,
+)
+from .provenance_report import (
+    PROVENANCE_GLOBAL_LIMITATIONS,
+    CryptographicSummary,
+    ProvenanceAssessmentSummary,
+    ProvenanceReport,
+    RecordSummary,
+    VerificationMatrix,
+    build_provenance_report,
+)
 from .render import render_coverage, render_evaluation, render_markdown, render_report
 from .report import (
     GLOBAL_LIMITATIONS,
@@ -34,4 +48,9 @@ __all__ = [
     "AssessmentLevel", "AssessmentStatus", "build_model_report", "summarise_model",
     "MODEL_GLOBAL_LIMITATIONS", "render_model_report", "render_model_markdown",
     "render_model_evaluation",
+    # Module 3
+    "ProvenanceReport", "ProvenanceAssessmentSummary", "CryptographicSummary",
+    "VerificationMatrix", "RecordSummary", "build_provenance_report",
+    "PROVENANCE_GLOBAL_LIMITATIONS", "render_provenance_report",
+    "render_provenance_markdown", "render_provenance_evaluation",
 ]

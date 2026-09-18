@@ -109,12 +109,47 @@ ATTACK_CLASS_REGISTRY: dict[str, dict[str, Any]] = {
         "reconstruction. Coverage is bounded by the declared family; "
         "sample-specific, semantic and adaptive triggers are NOT assessed.",
     },
-    "inference_tampering": {"title": "Inference record modification", "module": 3,
-                            "description": "Output, input or configuration altered after inference."},
-    "inference_replay": {"title": "Inference replay", "module": 3,
-                         "description": "A previously valid inference record re-submitted."},
-    "record_reordering": {"title": "Audit record reordering", "module": 3,
-                          "description": "Records resequenced within the audit trail."},
+    "inference_tampering": {
+        "title": "Inference record modification", "module": 3,
+        "description": "Output, input, model reference or configuration altered "
+        "after inference. Assessed deterministically: every bound field is "
+        "covered by an Ed25519 signature over canonical bytes, and each binding "
+        "is additionally checked against the artifact the analyst independently "
+        "holds, so a forger who re-signs with their own key is still caught by "
+        "the mismatch.",
+    },
+    "inference_replay": {
+        "title": "Inference replay", "module": 3,
+        "description": "A previously valid inference record re-submitted. "
+        "Assessed against a local replay database: exact re-presentation, nonce "
+        "reuse and sequence collision are detected. Bounded by the database's "
+        "retention, and deliberately distinct from the same input legitimately "
+        "processed twice, which is not replay.",
+    },
+    "record_reordering": {
+        "title": "Audit record reordering", "module": 3,
+        "description": "Records resequenced, inserted, deleted or duplicated "
+        "within the audit trail. Assessed by hash-chain linkage over the signed "
+        "entry digest plus contiguous sequence numbers.",
+    },
+    "provenance_key_trust": {
+        "title": "Provenance signed by an unauthorised key", "module": 3,
+        "description": "A record signed by a key the operator has not "
+        "authorised, has revoked, or that was outside its validity window. "
+        "Cryptographic validity and key authority are separate facts and are "
+        "never collapsed: anyone can generate a keypair, so a valid signature "
+        "from an unknown key establishes nothing.",
+    },
+    "chain_truncation": {
+        "title": "Audit log truncation", "module": 3,
+        "description": "Entries removed from the end of a provenance log. "
+        "Front truncation is self-detectable from the genesis rule. Tail "
+        "truncation is NOT self-detectable -- a truncated chain is internally "
+        "perfect -- and is assessed only against an out-of-band log anchor.",
+        "assessed_by": "`cvtrust provenance verify-log --anchor <anchor.json>`, "
+        "which compares the log head against a digest recorded out of band. "
+        "Without an anchor the outcome is NOT_DETECTABLE, never clean.",
+    },
     "distribution_shift": {"title": "Distribution shift", "module": 4,
                            "description": "Population-level deviation from a declared "
                            "reference distribution (terrain, season, sensor, illumination)."},

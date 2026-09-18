@@ -244,3 +244,121 @@ cvtrust lab model-evaluate model_lab --artifact model.pt   # the gradient pathwa
 | Peak RSS | ~437 MB |
 
 Single CPU core, no GPU.
+
+---
+
+## Module 3 — the provenance attack lab
+
+28 scenarios, built by `cvtrust lab provenance-build` and checked by
+`cvtrust lab provenance-evaluate`. Same contract as the other two labs: ground
+truth lives outside the artifacts under verification, and every scenario is a
+pure function of its seed — Ed25519 signatures are deterministic, so re-running
+produces byte-identical logs.
+
+### Scoring is different here, on purpose
+
+Modules 1 and 2 report precision and recall because their detectors produce
+scores. Module 3 produces none: a signature verifies or it does not. So each
+scenario declares the **exact set of failure codes** expected at every record
+position, and the harness asserts set equality.
+
+**An extra failure fails a scenario exactly as hard as a missed one.** A
+spurious `CHAIN_BREAK` on a clean log is as damaging to an analyst as a missed
+one on a forged log, and no threshold exists that could be tuned to paper over
+either. This is a stricter standard than an ROC curve, and it is only available
+because the module is deterministic.
+
+**Result: 28/28 reproduce exactly.**
+
+### The matrix
+
+| Scenario | Attack class | What is done | Expected outcome |
+|---|---|---|---|
+| `clean` | — | nothing | every record VALID, chain INTACT, anchor VERIFIED_COMPLETE |
+| `key_rotation` | — | half the log signed by a successor key, both trusted | every record VALID |
+| `legitimate_reprocess` | — | the same inputs processed again into a new log | every record VALID, replay `DUPLICATE_SUBJECT` |
+| `modified_input_digest` | `inference_tampering` | bound input digest edited, **no key** | `INVALID_SIGNATURE` + `SELF_INCONSISTENT_RECORD`; successor link breaks |
+| `modified_model_digest` | `inference_tampering`, `provenance_key_trust` | model digest rewritten and **re-signed with an adversary key** | `MODEL_MISMATCH` + `UNKNOWN_KEY`; signature *verifies* |
+| `modified_model_artifact` | `inference_tampering` | the model file on disk replaced; log untouched | `MODEL_MISMATCH` on every record; chain INTACT |
+| `modified_preprocessing_config` | `inference_tampering`, `provenance_key_trust` | preprocessing rewritten and re-signed | `CONFIGURATION_MISMATCH` + `UNKNOWN_KEY` |
+| `modified_inference_config` | `inference_tampering`, `provenance_key_trust` | thresholds rewritten and re-signed | `CONFIGURATION_MISMATCH` + `UNKNOWN_KEY` |
+| `modified_output` | `inference_tampering` | output digest edited, inline output left alone | `INVALID_SIGNATURE` + `OUTPUT_MISMATCH` + `SELF_INCONSISTENT_RECORD` |
+| `modified_timestamp` | `inference_tampering` | a timestamp backdated in the log | `INVALID_SIGNATURE` + `SELF_INCONSISTENT_RECORD` |
+| `modified_nonce` | `inference_tampering` | a nonce replaced | `INVALID_SIGNATURE` + `SELF_INCONSISTENT_RECORD` |
+| `modified_sequence` | `record_reordering` | a sequence number rewritten to 99 | `INVALID_SIGNATURE` + `SELF_INCONSISTENT_RECORD` + `CHAIN_BREAK` |
+| `modified_previous_digest` | `record_reordering` | a back-pointer rewritten | `INVALID_SIGNATURE` + `SELF_INCONSISTENT_RECORD` + `CHAIN_BREAK` |
+| `deleted_record` | `record_reordering` | a middle record removed | every surviving record VALID **alone**; only the chain sees the gap |
+| `inserted_record` | `record_reordering`, `provenance_key_trust` | a forged record spliced in with a correct back-pointer | `UNKNOWN_KEY` on the forgery; `CHAIN_BREAK` + `REPLAY` (sequence fork) after it |
+| `reordered_records` | `record_reordering` | two adjacent records swapped | three links break; every signature still verifies |
+| `duplicated_record` | `record_reordering`, `inference_replay` | a record duplicated in place | `CHAIN_BREAK` + `REPLAY`; two independent mechanisms fire |
+| `unknown_key` | `provenance_key_trust` | a whole log signed by an unauthorised key | `UNKNOWN_KEY` on every record; **chain INTACT, every signature valid** |
+| `revoked_key` | `provenance_key_trust` | the log is genuine; its key has since been revoked | `REVOKED_KEY`; whether records claim to predate revocation reported separately |
+| `expired_key_window` | `provenance_key_trust` | the key's trusted window ended before the log | `KEY_EXPIRED` |
+| `wrong_key_purpose` | `provenance_key_trust` | the key is trusted only to anchor logs | `KEY_PURPOSE_MISMATCH` |
+| `key_id_forgery` | `provenance_key_trust` | envelope names a trusted `key_id`, carries another key | `MALFORMED_SIGNATURE` + `UNKNOWN_KEY`; trust lookup **skipped** |
+| `missing_signature` | `provenance_key_trust` | a signature stripped | `MISSING_SIGNATURE`; the chain breaks because it covers the envelope |
+| `malformed_record` | `inference_tampering` | an unparseable line inserted | 1 malformed line reported; **the other six records still verify** |
+| `schema_version_mismatch` | `inference_tampering` | a record claims schema 9.9 | `UNSUPPORTED_SCHEMA`; refused rather than guessed |
+| `replay_exact` | `inference_replay` | genuine records re-presented after the log was observed | `REPLAY` on every record; every signature still valid |
+| `truncated_log` | `chain_truncation` | the last three entries removed | chain INTACT, every record VALID; **only the anchor sees it** |
+| `front_truncated_log` | `chain_truncation` | the first two entries removed | `CHAIN_BREAK` everywhere; front truncation *is* self-detectable |
+
+### Four scenarios are not attacks
+
+`clean`, `key_rotation` and `legitimate_reprocess` must produce **zero
+findings** — a lab containing only attacks measures nothing, and these are the
+false-positive guards for the verifier, the rotation logic and the replay
+detector respectively.
+
+`modified_model_artifact` is a fourth kind: the cryptography is flawless, every
+signature verifies, the chain is intact and the anchor holds. It fails because
+the model on disk is no longer the model the records describe. It is the
+scenario that shows why an independent expectation is a separate source of truth
+from the signature.
+
+### The three that are worth reading in full
+
+**`modified_model_digest`** — an adversary holding a signing key. The signature
+verifies, the record id matches its content, the record is internally perfect.
+It is caught only because the key is not in the trust store *and* the bound
+digest contradicts the model the analyst assured. Neither mechanism alone finds
+it, and that is the argument for having both.
+
+**`deleted_record`** — every surviving record verifies individually. Record-by-record
+verification reports a clean log. Only the chain sees the gap. This is the
+scenario that justifies the chain existing at all.
+
+**`truncated_log`** — evaluated *with* the anchor it is `TRUNCATION_DETECTED`;
+evaluated *without* one it is indistinguishable from a clean three-record log,
+and the verifier reports `NOT_DETECTABLE` rather than clean. The honest negative
+result, reproducible on demand.
+
+### Performance
+
+Measured by `cvtrust provenance benchmark --records 200` (development host,
+Python 3.13, macOS, single-threaded):
+
+| Operation | Mean | p95 |
+|---|---|---|
+| Record creation | 0.096 ms | 0.10 ms |
+| Signing | 0.121 ms | 0.13 ms |
+| Signature verification | 0.206 ms | 0.21 ms |
+| Full record verification (27 checks) | 0.540 ms | 0.58 ms |
+| Chain verification, 200 entries | 10.8 ms | — |
+| Replay lookup, 200-observation database | 0.052 ms | 0.06 ms |
+
+Storage: ~2.8 KB per record (dominated by the inline canonical output, which is
+what makes a record self-verifying), ~443 bytes per replay observation.
+
+### Reproducing
+
+```bash
+./scripts/provenance-evaluate.sh
+```
+
+Or step by step:
+
+```bash
+cvtrust lab provenance-build    --out provenance_lab
+cvtrust lab provenance-evaluate provenance_lab --out reports/provenance_evaluation.json
+```

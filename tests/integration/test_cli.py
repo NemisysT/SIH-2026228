@@ -157,3 +157,212 @@ def test_demo_runs_end_to_end(tmp_path):
     reports = tmp_path / "attack_lab" / "reports"
     assert (reports / "demo_attacked.json").is_file()
     assert (reports / "demo_attacked.md").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Module 3 — the provenance commands
+# ---------------------------------------------------------------------------
+
+
+def test_provenance_keygen_refuses_an_unencrypted_key_without_the_opt_in(tmp_path):
+    result = _run(
+        "provenance", "keygen", "--out", str(tmp_path / "k.pem"), expect=2
+    )
+    assert "refusing to write an unencrypted private key" in result.stderr
+
+
+def test_provenance_keygen_writes_both_halves_and_warns_about_trust(tmp_path):
+    out = _run(
+        "provenance", "keygen", "--out", str(tmp_path / "k.pem"),
+        "--allow-unencrypted", "--label", "demo",
+    ).stdout
+    assert "key_id" in out
+    assert "trusted by nobody yet" in out
+    assert (tmp_path / "k.pem").is_file()
+    assert (tmp_path / "k.pub.json").is_file()
+
+
+def test_the_provenance_lifecycle_runs_end_to_end_from_the_cli(tmp_path):
+    """keygen -> trust -> record -> anchor -> verify-log, exactly as documented."""
+    key = tmp_path / "k.pem"
+    store = tmp_path / "trust.json"
+    log = tmp_path / "log.jsonl"
+    image = tmp_path / "image.bin"
+    model = tmp_path / "model.bin"
+    output = tmp_path / "output.json"
+    image.write_bytes(b"an-input-image")
+    model.write_bytes(b"a-model-artifact")
+    output.write_text(
+        json.dumps({"task": "classification", "scores": {"defect": 0.91, "clean": 0.09}})
+    )
+
+    _run("provenance", "keygen", "--out", str(key), "--allow-unencrypted")
+    _run(
+        "provenance", "trust", "add", str(tmp_path / "k.pub.json"),
+        "--store", str(store), "--provenance", "generated locally for this test",
+    )
+    for _ in range(3):
+        _run(
+            "provenance", "record", str(image), str(output),
+            "--key", str(key), "--log", str(log),
+            "--model-artifact", str(model),
+        )
+
+    anchor = tmp_path / "anchor.json"
+    _run("provenance", "anchor", str(log), "--out", str(anchor))
+
+    report_path = tmp_path / "report.json"
+    markdown_path = tmp_path / "report.md"
+    result = _run(
+        "provenance", "verify-log", str(log),
+        "--store", str(store), "--anchor", str(anchor),
+        "--replay-db", str(tmp_path / "replay.json"),
+        "--out", str(report_path), "--markdown-out", str(markdown_path),
+    )
+    assert "PROVENANCE VERIFIED" in result.stdout
+    payload = json.loads(report_path.read_text())
+    assert payload["summary"]["records_valid"] == 3
+    assert payload["summary"]["chain_status"] == "INTACT"
+    assert payload["summary"]["truncation_status"] == "VERIFIED_COMPLETE"
+    assert "Inference Provenance Report" in markdown_path.read_text()
+
+
+def test_a_record_must_bind_a_model(tmp_path):
+    image = tmp_path / "i.bin"
+    output = tmp_path / "o.json"
+    image.write_bytes(b"x")
+    output.write_text(json.dumps({"task": "raw", "value": 1}))
+    _run("provenance", "keygen", "--out", str(tmp_path / "k.pem"), "--allow-unencrypted")
+    result = _run(
+        "provenance", "record", str(image), str(output),
+        "--key", str(tmp_path / "k.pem"), "--log", str(tmp_path / "l.jsonl"),
+        expect=2,
+    )
+    assert "must bind a model" in result.stderr
+
+
+def test_verify_log_without_a_trust_store_does_not_report_clean(tmp_path):
+    key = tmp_path / "k.pem"
+    log = tmp_path / "log.jsonl"
+    image = tmp_path / "i.bin"
+    model = tmp_path / "m.bin"
+    output = tmp_path / "o.json"
+    image.write_bytes(b"x")
+    model.write_bytes(b"y")
+    output.write_text(json.dumps({"task": "classification", "scores": {"a": 0.5}}))
+    _run("provenance", "keygen", "--out", str(key), "--allow-unencrypted")
+    _run(
+        "provenance", "record", str(image), str(output), "--key", str(key),
+        "--log", str(log), "--model-artifact", str(model),
+    )
+    result = _run("provenance", "verify-log", str(log), expect=None)
+    # Exit 1 (review), not 3 (quarantine): a check that could not run is an open
+    # question, not a compromise. But emphatically not 0 either.
+    assert result.returncode == 1
+    assert "PROVENANCE UNVERIFIED" in result.stdout
+    assert "NOT SUPPLIED" in result.stdout
+
+
+def test_a_tampered_log_exits_with_the_quarantine_code(tmp_path):
+    key = tmp_path / "k.pem"
+    store = tmp_path / "trust.json"
+    log = tmp_path / "log.jsonl"
+    image = tmp_path / "i.bin"
+    model = tmp_path / "m.bin"
+    output = tmp_path / "o.json"
+    image.write_bytes(b"x")
+    model.write_bytes(b"y")
+    output.write_text(json.dumps({"task": "classification", "scores": {"a": 0.5}}))
+
+    _run("provenance", "keygen", "--out", str(key), "--allow-unencrypted")
+    _run("provenance", "trust", "add", str(tmp_path / "k.pub.json"), "--store", str(store))
+    for _ in range(2):
+        _run(
+            "provenance", "record", str(image), str(output), "--key", str(key),
+            "--log", str(log), "--model-artifact", str(model),
+        )
+
+    lines = log.read_text().splitlines()
+    lines[0] = lines[0].replace('"producer":null', '"producer":"forged"')
+    log.write_text("\n".join(lines) + "\n")
+
+    result = _run("provenance", "verify-log", str(log), "--store", str(store), expect=3)
+    assert "PROVENANCE COMPROMISED" in result.stdout
+
+
+def test_trust_list_prints_how_each_key_was_obtained(tmp_path):
+    store = tmp_path / "trust.json"
+    _run("provenance", "keygen", "--out", str(tmp_path / "k.pem"), "--allow-unencrypted")
+    _run(
+        "provenance", "trust", "add", str(tmp_path / "k.pub.json"),
+        "--store", str(store), "--label", "ops", "--provenance", "hand-carried",
+    )
+    out = _run("provenance", "trust", "list", "--store", str(store)).stdout
+    assert "TRUSTED" in out
+    assert "hand-carried" in out
+    assert "No CA, no PKI" in out
+
+
+def test_revoking_a_key_changes_the_verdict(tmp_path):
+    key = tmp_path / "k.pem"
+    store = tmp_path / "trust.json"
+    log = tmp_path / "log.jsonl"
+    image = tmp_path / "i.bin"
+    model = tmp_path / "m.bin"
+    output = tmp_path / "o.json"
+    image.write_bytes(b"x")
+    model.write_bytes(b"y")
+    output.write_text(json.dumps({"task": "classification", "scores": {"a": 0.5}}))
+
+    keygen_out = _run(
+        "provenance", "keygen", "--out", str(key), "--allow-unencrypted"
+    ).stdout
+    key_id = keygen_out.split("key_id")[1].split()[0]
+    _run("provenance", "trust", "add", str(tmp_path / "k.pub.json"), "--store", str(store))
+    _run(
+        "provenance", "record", str(image), str(output), "--key", str(key),
+        "--log", str(log), "--model-artifact", str(model),
+    )
+    _run("provenance", "verify-log", str(log), "--store", str(store))
+
+    _run(
+        "provenance", "trust", "revoke", key_id, "--store", str(store),
+        "--reason", "test revocation",
+    )
+    result = _run("provenance", "verify-log", str(log), "--store", str(store), expect=None)
+    assert result.returncode != 0
+    assert "REVOKED" in result.stdout
+
+
+def test_the_provenance_lab_builds_and_evaluates_from_the_cli(tmp_path):
+    lab = tmp_path / "provenance_lab"
+    build = _run("lab", "provenance-build", "--out", str(lab), "--records", "6")
+    assert "scenario(s) written" in build.stdout
+
+    result = _run(
+        "lab", "provenance-evaluate", str(lab),
+        "--out", str(tmp_path / "evaluation.json"),
+    )
+    assert "reproduce exactly" in result.stdout
+    payload = json.loads((tmp_path / "evaluation.json").read_text())
+    assert payload["scenarios_failed"] == 0
+    assert payload["scenarios_total"] >= 20
+
+
+def test_the_benchmark_reports_storage_and_timings(tmp_path):
+    out = tmp_path / "benchmark.json"
+    result = _run("provenance", "benchmark", "--records", "40", "--out", str(out))
+    assert "Provenance performance" in result.stdout
+    payload = json.loads(out.read_text())
+    assert payload["record_count"] == 40
+    assert {t["operation"] for t in payload["timings"]} >= {
+        "record_creation", "signing", "record_verification",
+        "chain_verification_full_log", "replay_lookup",
+    }
+    assert payload["storage"]["log_bytes"] > 0
+
+
+def test_info_now_declares_module_3_classes_as_covered():
+    out = _run("info").stdout
+    assert "provenance_key_trust" in out
+    assert "chain_truncation" in out

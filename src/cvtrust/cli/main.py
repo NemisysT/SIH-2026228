@@ -3,10 +3,12 @@
 Everything the platform does is reachable from here, offline, with no service to
 start.  Commands are grouped by the object they act on:
 
-``dataset``   scan, verify, manifest
-``lab``       generate the synthetic corpus, run attacks, evaluate, calibrate
-``demo``      the end-to-end judge-facing demonstration
-``info``      what this build supports and what it does not
+``dataset``     scan, verify, manifest
+``model``       manifest, verify, assess
+``provenance``  keygen, trust, record, verify, verify-log, anchor, benchmark
+``lab``         generate the synthetic corpus, run attacks, evaluate, calibrate
+``demo``        the end-to-end judge-facing demonstration
+``info``        what this build supports and what it does not
 """
 
 from __future__ import annotations
@@ -26,8 +28,9 @@ from ..core.logging import configure_logging
 app = typer.Typer(
     name="cvtrust",
     help="Trustworthy Computer Vision Integrity Assurance (SIH26228) — "
-    "offline dataset forensics (Module 1) and model forensics with backdoor "
-    "assurance (Module 2).",
+    "offline dataset forensics (Module 1), model forensics with backdoor "
+    "assurance (Module 2), and inference provenance with cryptographic "
+    "integrity (Module 3).",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -36,9 +39,19 @@ model_app = typer.Typer(
     help="Model ingestion, identity and backdoor assurance (Module 2).",
     no_args_is_help=True,
 )
+provenance_app = typer.Typer(
+    help="Inference provenance and cryptographic integrity (Module 3).",
+    no_args_is_help=True,
+)
+trust_app = typer.Typer(
+    help="The local, offline trust store: which keys the operator authorises.",
+    no_args_is_help=True,
+)
+provenance_app.add_typer(trust_app, name="trust")
 lab_app = typer.Typer(help="Synthetic attack laboratory and evaluation.", no_args_is_help=True)
 app.add_typer(dataset_app, name="dataset")
 app.add_typer(model_app, name="model")
+app.add_typer(provenance_app, name="provenance")
 app.add_typer(lab_app, name="lab")
 
 
@@ -73,7 +86,7 @@ def info() -> None:
     from ..reporting.render import render_coverage
     from ..risk.coverage import CoverageStatement
 
-    render_coverage(CoverageStatement.build([], (1, 2)))
+    render_coverage(CoverageStatement.build([], (1, 2, 3)))
     typer.echo()
     typer.secho("Model formats available in this environment:", bold=True)
     if REGISTERED_ADAPTERS:
@@ -376,6 +389,560 @@ def model_assess(
         else 0 if report.summary.overall.startswith("NO ANOMALY DETECTED")
         else 1
     )
+
+
+# ---------------------------------------------------------------------------
+# Module 3 — inference provenance and cryptographic integrity
+# ---------------------------------------------------------------------------
+
+
+@provenance_app.command("keygen")
+def provenance_keygen(
+    out: Path = typer.Option(Path("keys/signer.pem"), "--out", "-o",
+                             help="Where to write the PKCS#8 private key."),
+    public_out: Optional[Path] = typer.Option(
+        None, "--public-out", help="Defaults to <out>.pub.json."
+    ),
+    label: Optional[str] = typer.Option(None, "--label", help="A name for the key. A label."),
+    passphrase: Optional[str] = typer.Option(
+        None, "--passphrase",
+        help="Encrypts the private key at rest. Strongly preferred; without it "
+             "--allow-unencrypted is required.",
+    ),
+    allow_unencrypted: bool = typer.Option(
+        False, "--allow-unencrypted",
+        help="Write the private key with no passphrase. For tests and demos. "
+             "This software cannot protect a key from a compromised host either "
+             "way -- see docs/cryptographic-model.md.",
+    ),
+) -> None:
+    """Generate an Ed25519 signing keypair locally. Nothing is registered anywhere."""
+    from ..provenance.keys import generate_keypair
+
+    try:
+        _, info = generate_keypair(
+            private_path=out, public_path=public_out, label=label,
+            passphrase=passphrase, allow_unencrypted=allow_unencrypted,
+        )
+    except CvTrustError as exc:
+        _fail(exc)
+        return
+
+    typer.secho(f"key_id       {info.key_id}", fg=typer.colors.GREEN)
+    typer.echo(f"public key   {info.public_key_hex}")
+    typer.echo(f"private key  {info.private_key_path}"
+               f"{'' if info.encrypted else '  (UNENCRYPTED)'}")
+    typer.echo(f"public half  {info.public_key_path}")
+    typer.secho(
+        "\nThis key is trusted by nobody yet. Add its public half to a trust "
+        "store with `cvtrust provenance trust add`, on the machine that will "
+        "verify -- and get it there through a channel independent of the one "
+        "that will supply the records.",
+        fg=typer.colors.YELLOW,
+    )
+
+
+@trust_app.command("add")
+def provenance_trust_add(
+    public_key: Path = typer.Argument(..., help="A .pub.json from `provenance keygen`."),
+    store: Path = typer.Option(Path("trust_store.json"), "--store", "-s"),
+    label: Optional[str] = typer.Option(None, "--label"),
+    valid_from: Optional[str] = typer.Option(None, "--valid-from", help="ISO-8601 UTC."),
+    valid_until: Optional[str] = typer.Option(None, "--valid-until", help="ISO-8601 UTC."),
+    purpose: str = typer.Option(
+        "inference_provenance", "--purpose",
+        help="inference_provenance | log_anchor | any",
+    ),
+    provenance: Optional[str] = typer.Option(
+        None, "--provenance",
+        help="How this key was obtained. The most important field for a "
+             "reviewer: a key obtained through the same channel as the records "
+             "establishes nothing.",
+    ),
+) -> None:
+    """Record an operator decision to trust a key."""
+    from ..provenance.keys import read_public_key_file
+    from ..provenance.trust import KeyPurpose, TrustStore, trust_key
+
+    try:
+        payload = read_public_key_file(public_key)
+        updated = trust_key(
+            TrustStore.load_or_empty(store),
+            public_key=str(payload["public_key"]),
+            label=label or payload.get("label"),
+            valid_from=valid_from,
+            valid_until=valid_until,
+            purpose=KeyPurpose(purpose),
+            provenance=provenance,
+        )
+        updated.save(store)
+    except (CvTrustError, ValueError) as exc:
+        _fail(exc if isinstance(exc, CvTrustError) else CvTrustError(str(exc)))
+        return
+
+    typer.secho(f"trusted {payload['key_id']}", fg=typer.colors.GREEN)
+    typer.echo(f"store   {store} ({len(updated.keys)} key(s))")
+    if not provenance:
+        typer.secho(
+            "no --provenance recorded: a reviewer cannot tell how this key was "
+            "obtained, and that is the assumption the whole trust model rests on",
+            fg=typer.colors.YELLOW,
+        )
+
+
+@trust_app.command("revoke")
+def provenance_trust_revoke(
+    key_id: str = typer.Argument(..., help="Full 64-character key id."),
+    reason: str = typer.Option(..., "--reason", help="Recorded in the store; required."),
+    store: Path = typer.Option(Path("trust_store.json"), "--store", "-s"),
+) -> None:
+    """Revoke a key. Revocation is absolute and takes effect on this store only."""
+    from ..provenance.trust import TrustStore, revoke_key
+
+    try:
+        updated = revoke_key(TrustStore.load(store), key_id, reason=reason)
+        updated.save(store)
+    except CvTrustError as exc:
+        _fail(exc)
+        return
+    typer.secho(f"revoked {key_id}", fg=typer.colors.YELLOW)
+    typer.echo(f"reason  {reason}")
+    typer.secho(
+        "There is no revocation service. This takes effect for verifications "
+        "that read THIS store, and nowhere else.",
+        fg=typer.colors.YELLOW,
+    )
+
+
+@trust_app.command("list")
+def provenance_trust_list(
+    store: Path = typer.Option(Path("trust_store.json"), "--store", "-s"),
+) -> None:
+    """Print the trust store."""
+    from ..provenance.trust import TrustStore
+
+    try:
+        loaded = TrustStore.load(store)
+    except CvTrustError as exc:
+        _fail(exc)
+        return
+
+    typer.secho(f"{len(loaded.keys)} key(s) in {store}", bold=True)
+    typer.echo(f"store digest {loaded.digest()[:32]}...")
+    typer.echo()
+    for key in loaded.keys:
+        colour = {
+            "TRUSTED": typer.colors.GREEN,
+            "REVOKED": typer.colors.RED,
+            "UNKNOWN": typer.colors.YELLOW,
+        }[key.status.value]
+        typer.secho(f"  {key.key_id}  {key.status.value}", fg=colour)
+        typer.echo(f"    label     {key.label or '-'}")
+        typer.echo(f"    purpose   {key.purpose.value}")
+        typer.echo(f"    window    {key.valid_from or 'open'} .. {key.valid_until or 'open'}")
+        typer.echo(f"    obtained  {key.provenance or 'NOT RECORDED'}")
+        if key.revoked_at:
+            typer.echo(f"    revoked   {key.revoked_at}: {key.revocation_reason}")
+    typer.echo()
+    typer.secho(loaded.administrative_model, fg=typer.colors.BLUE)
+
+
+@provenance_app.command("record")
+def provenance_record(
+    input_path: Path = typer.Argument(..., help="The inference input artifact."),
+    output_json: Path = typer.Argument(..., help="JSON file holding the inference output."),
+    key: Path = typer.Option(..., "--key", "-k", help="Ed25519 private key (PKCS#8 PEM)."),
+    log: Path = typer.Option(Path("provenance.jsonl"), "--log", "-l"),
+    model_manifest: Optional[Path] = typer.Option(
+        None, "--model-manifest",
+        help="A manifest from `cvtrust model manifest`. Module 3 binds Module "
+             "2's identity rather than computing its own.",
+    ),
+    model_artifact: Optional[Path] = typer.Option(
+        None, "--model-artifact",
+        help="Bind a model by file digest alone, when no manifest exists.",
+    ),
+    preprocessing: Optional[Path] = typer.Option(
+        None, "--preprocessing", help="JSON preprocessing configuration."
+    ),
+    inference_config: Optional[Path] = typer.Option(
+        None, "--inference-config", help="JSON inference configuration."
+    ),
+    passphrase: Optional[str] = typer.Option(None, "--passphrase"),
+    log_id: Optional[str] = typer.Option(
+        None, "--log-id", help="Defaults to the existing log's id, or the file stem."
+    ),
+    producer: Optional[str] = typer.Option(None, "--producer", help="A label. UNTRUSTED."),
+    config: Optional[Path] = typer.Option(None, "--config", "-c"),
+) -> None:
+    """Create and sign a provenance record, appending it to a log."""
+    from ..provenance.binding import bind_config, bind_input, bind_output
+    from ..provenance.keys import load_private_key
+    from ..provenance.log import ProvenanceLog
+    from ..provenance.output import raw_output
+    from ..provenance.record import create_provenance_record
+
+    try:
+        _load_config(config)
+        private_key = load_private_key(key, passphrase)
+        model_binding = _model_binding_from_cli(model_manifest, model_artifact)
+        output_payload = json.loads(output_json.read_text(encoding="utf-8"))
+        canonical = _canonical_output_from(output_payload)
+        pre = bind_config(_read_json(preprocessing))
+        inf = bind_config(_read_json(inference_config))
+
+        existing = ProvenanceLog.load(log) if log.is_file() else ProvenanceLog.new(
+            log_id or log.stem, log
+        )
+        existing.path = log
+        if log_id and existing.log_id != log_id and len(existing) == 0:
+            existing.log_id = log_id
+
+        def factory(sequence_number: int, previous_record_digest):
+            return create_provenance_record(
+                input_binding=bind_input(input_path),
+                model_binding=model_binding,
+                preprocessing=pre,
+                inference=inf,
+                output=bind_output(canonical),
+                log_id=existing.log_id,
+                sequence_number=sequence_number,
+                previous_record_digest=previous_record_digest,
+                producer=producer,
+            )
+
+        entry = existing.append_signed(factory, private_key)
+        existing.save(log)
+    except (CvTrustError, ValueError, KeyError) as exc:
+        _fail(exc if isinstance(exc, CvTrustError) else CvTrustError(str(exc)))
+        return
+
+    typer.secho(f"record_id     {entry.record.record_id}", fg=typer.colors.GREEN)
+    typer.echo(f"entry digest  {entry.entry_digest()}")
+    typer.echo(f"sequence      {entry.record.sequence.sequence_number}")
+    typer.echo(f"input digest  {entry.record.input.raw_input_digest}")
+    typer.echo(f"model digest  {entry.record.model.file_sha256}")
+    typer.echo(f"output digest {entry.record.output.digest}")
+    assert entry.signature is not None
+    typer.echo(f"signed by     {entry.signature.key_id}")
+    typer.echo(f"log           {log} ({len(existing)} entries)")
+
+
+@provenance_app.command("verify")
+def provenance_verify(
+    record_file: Path = typer.Argument(..., help="A single signed record, as JSON."),
+    store: Optional[Path] = typer.Option(None, "--store", "-s", help="Trust store."),
+    input_artifact: Optional[Path] = typer.Option(
+        None, "--input", help="Corroborate the bound input against this file."
+    ),
+    model_manifest: Optional[Path] = typer.Option(
+        None, "--model-manifest", help="Corroborate the bound model against this."
+    ),
+    replay_db: Optional[Path] = typer.Option(None, "--replay-db"),
+    config: Optional[Path] = typer.Option(None, "--config", "-c"),
+    out: Optional[Path] = typer.Option(None, "--out", "-o"),
+    markdown_out: Optional[Path] = typer.Option(None, "--markdown-out"),
+    full: bool = typer.Option(False, "--full"),
+) -> None:
+    """Verify one provenance record outside a log."""
+    from ..provenance.record import SignedRecord
+    from ..provenance.replay import ReplayDatabase
+    from ..provenance.trust import TrustStore
+    from ..provenance_pipeline import verify_single_record
+    from ..reporting.provenance_render import (
+        render_provenance_markdown,
+        render_provenance_report,
+    )
+
+    try:
+        cfg = _load_config(config)
+        entry = SignedRecord.model_validate_json(
+            record_file.read_text(encoding="utf-8")
+        )
+        report, _, database = verify_single_record(
+            entry, cfg,
+            trust_store=TrustStore.load(store) if store else None,
+            expected=_expected_from_cli(input_artifact, model_manifest),
+            replay_database=ReplayDatabase.load_or_empty(replay_db) if replay_db else None,
+        )
+    except CvTrustError as exc:
+        _fail(exc)
+        return
+    except Exception as exc:
+        _fail(CvTrustError(f"cannot read record {record_file}: {exc}"))
+        return
+
+    render_provenance_report(report, full=full)
+    if replay_db and database is not None:
+        database.save(replay_db)
+    _write_provenance_outputs(report, out, markdown_out, render_provenance_markdown)
+    raise typer.Exit(code=_provenance_exit_code(report))
+
+
+@provenance_app.command("verify-log")
+def provenance_verify_log(
+    log: Path = typer.Argument(..., help="A provenance log (JSONL)."),
+    store: Optional[Path] = typer.Option(None, "--store", "-s"),
+    anchor: Optional[Path] = typer.Option(
+        None, "--anchor",
+        help="An out-of-band log anchor. WITHOUT ONE, tail truncation is not "
+             "detectable and is reported as such.",
+    ),
+    replay_db: Optional[Path] = typer.Option(
+        None, "--replay-db",
+        help="Local replay database. Without one, replay is NOT assessed.",
+    ),
+    model_manifest: Optional[Path] = typer.Option(None, "--model-manifest"),
+    input_artifact: Optional[Path] = typer.Option(None, "--input"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Do not write observations back to the replay database.",
+    ),
+    config: Optional[Path] = typer.Option(None, "--config", "-c"),
+    out: Optional[Path] = typer.Option(None, "--out", "-o"),
+    markdown_out: Optional[Path] = typer.Option(None, "--markdown-out"),
+    full: bool = typer.Option(False, "--full"),
+) -> None:
+    """Verify a whole provenance log: bindings, signatures, trust, chain, replay."""
+    from ..provenance_pipeline import load_verification_inputs, verify_log as run_verify
+    from ..reporting.provenance_render import (
+        render_provenance_markdown,
+        render_provenance_report,
+    )
+
+    try:
+        cfg = _load_config(config)
+        provenance_log, trust_store, database, log_anchor = load_verification_inputs(
+            log_path=log, trust_store_path=store,
+            replay_db_path=replay_db, anchor_path=anchor,
+        )
+        report, _, updated = run_verify(
+            provenance_log, cfg,
+            trust_store=trust_store,
+            expected=_expected_from_cli(input_artifact, model_manifest),
+            replay_database=database,
+            anchor=log_anchor,
+            record_observations=not dry_run,
+        )
+    except CvTrustError as exc:
+        _fail(exc)
+        return
+
+    render_provenance_report(report, full=full)
+    if replay_db and updated is not None and not dry_run:
+        updated.save(replay_db)
+        typer.secho(f"replay database updated: {replay_db}", fg=typer.colors.BLUE)
+    _write_provenance_outputs(report, out, markdown_out, render_provenance_markdown)
+    raise typer.Exit(code=_provenance_exit_code(report))
+
+
+@provenance_app.command("anchor")
+def provenance_anchor(
+    log: Path = typer.Argument(..., help="The log to anchor."),
+    out: Path = typer.Option(Path("anchor.json"), "--out", "-o"),
+    note: Optional[str] = typer.Option(None, "--note"),
+) -> None:
+    """Record a log's head out of band. The only thing that makes truncation detectable."""
+    from ..provenance.chain import build_anchor
+    from ..provenance.log import ProvenanceLog
+
+    try:
+        provenance_log = ProvenanceLog.load(log)
+        anchor = build_anchor(provenance_log.entries, note=note)
+    except (CvTrustError, ValueError) as exc:
+        _fail(exc if isinstance(exc, CvTrustError) else CvTrustError(str(exc)))
+        return
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(anchor.model_dump_json(indent=2), encoding="utf-8")
+    typer.secho(f"head digest  {anchor.head_entry_digest}", fg=typer.colors.GREEN)
+    typer.echo(f"entries      {anchor.entry_count}")
+    typer.echo(f"written to   {out}")
+    typer.secho(
+        "\nStore this somewhere whoever writes the log cannot reach. An anchor "
+        "kept beside the log it anchors protects against nothing.",
+        fg=typer.colors.YELLOW,
+    )
+
+
+@provenance_app.command("benchmark")
+def provenance_benchmark(
+    records: int = typer.Option(200, "--records", "-n"),
+    out: Optional[Path] = typer.Option(None, "--out", "-o"),
+) -> None:
+    """Measure record creation, signing, verification and chain-verification cost."""
+    from ..provenance.benchmark import run_benchmark, render_benchmark
+
+    result = run_benchmark(record_count=records)
+    render_benchmark(result)
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+        typer.secho(f"\nbenchmark written to {out}", fg=typer.colors.BLUE)
+
+
+@lab_app.command("provenance-build")
+def lab_provenance_build(
+    lab_dir: Path = typer.Option(Path("provenance_lab"), "--out", "-o"),
+    seed: int = typer.Option(20260917, "--seed"),
+    records: int = typer.Option(6, "--records", help="Records in the clean baseline."),
+    scenarios: Optional[str] = typer.Option(None, "--scenarios", help="Comma-separated subset."),
+) -> None:
+    """Build the reproducible provenance attack scenarios."""
+    from ..attack_lab.provenance_attacks import build_lab
+
+    try:
+        _, built = build_lab(
+            lab_dir, seed=seed, record_count=records,
+            scenarios=[s.strip() for s in scenarios.split(",")] if scenarios else None,
+        )
+    except CvTrustError as exc:
+        _fail(exc)
+        return
+
+    for scenario in built:
+        typer.echo(f"  {scenario.name:30s} {', '.join(scenario.attack_classes)}")
+    typer.secho(f"{len(built)} scenario(s) written under {lab_dir}", fg=typer.colors.GREEN)
+
+
+@lab_app.command("provenance-evaluate")
+def lab_provenance_evaluate(
+    lab_dir: Path = typer.Argument(Path("provenance_lab"), help="Provenance lab directory."),
+    config: Optional[Path] = typer.Option(None, "--config", "-c"),
+    out: Path = typer.Option(Path("reports/provenance_evaluation.json"), "--out", "-o"),
+    scenarios: Optional[str] = typer.Option(None, "--scenarios"),
+) -> None:
+    """Check every scenario's verification outcome against its ground truth, exactly."""
+    from ..attack_lab.provenance_evaluate import evaluate_lab
+    from ..reporting.provenance_render import render_provenance_evaluation
+
+    try:
+        cfg = _load_config(config)
+        report = evaluate_lab(
+            lab_dir, cfg,
+            scenarios=[s.strip() for s in scenarios.split(",")] if scenarios else None,
+        )
+    except CvTrustError as exc:
+        _fail(exc)
+        return
+
+    render_provenance_evaluation(report)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    typer.secho(f"\nevaluation written to {out}", fg=typer.colors.BLUE)
+    raise typer.Exit(code=0 if report.all_passed else 1)
+
+
+# -- provenance CLI helpers -------------------------------------------------
+
+
+def _read_json(path: Optional[Path]) -> dict:
+    """An absent configuration file is an empty configuration, and is bound as one.
+
+    Not skipped: a record whose preprocessing digest covers ``{}`` states that
+    no preprocessing was declared, which is a checkable claim. Omitting the
+    field entirely would leave nothing to check.
+    """
+    if path is None:
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _canonical_output_from(payload: dict):
+    """Build a canonical output from a JSON file, by its declared task."""
+    from ..provenance.output import (
+        classification_output,
+        detection_output,
+        keypoint_output,
+        raw_output,
+        segmentation_output,
+    )
+
+    task = str(payload.get("task", "raw"))
+    if task == "classification":
+        return classification_output(
+            payload["scores"], labels=payload.get("labels")
+        )
+    if task == "detection":
+        return detection_output(
+            payload["detections"],
+            labels=payload.get("labels", ()),
+            coordinate_space=payload.get("coordinate_space", "input_pixels"),
+        )
+    if task == "segmentation":
+        return segmentation_output(payload["masks"], labels=payload.get("labels", ()))
+    if task == "keypoints":
+        return keypoint_output(payload["keypoints"])
+    return raw_output(payload)
+
+
+def _model_binding_from_cli(manifest_path: Optional[Path], artifact: Optional[Path]):
+    from ..core.hashing import sha256_file
+    from ..provenance.binding import ModelBinding, bind_model_manifest
+
+    if manifest_path is not None:
+        from ..models.manifest import load_model_manifest
+
+        return bind_model_manifest(load_model_manifest(manifest_path))
+    if artifact is not None:
+        digest = sha256_file(artifact)
+        return ModelBinding(
+            model_id=f"M-{digest[:16]}",
+            file_sha256=digest,
+            model_format=artifact.suffix.lstrip(".") or "unknown",
+        )
+    raise CvTrustError(
+        "a record must bind a model: supply --model-manifest (preferred, it "
+        "carries Module 2's graph and parameter digests too) or --model-artifact"
+    )
+
+
+def _expected_from_cli(input_artifact: Optional[Path], model_manifest: Optional[Path]):
+    from ..core.hashing import sha256_file
+    from ..provenance.verify import ExpectedBinding
+
+    if input_artifact is None and model_manifest is None:
+        return None
+    values: dict = {}
+    sources: list[str] = []
+    if input_artifact is not None:
+        values["raw_input_digest"] = sha256_file(input_artifact)
+        sources.append(f"input artifact {input_artifact}")
+    if model_manifest is not None:
+        from ..models.manifest import load_model_manifest
+
+        manifest = load_model_manifest(model_manifest)
+        values.update(
+            model_id=manifest.model_id,
+            model_file_sha256=manifest.file_sha256,
+            model_graph_digest=manifest.graph_digest,
+            model_parameter_digest=manifest.parameter_digest,
+        )
+        sources.append(f"model manifest {manifest.manifest_id}")
+    return ExpectedBinding(source="; ".join(sources), **values)
+
+
+def _write_provenance_outputs(report, out, markdown_out, renderer) -> None:
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+        typer.secho(f"\nJSON report written to {out}", fg=typer.colors.BLUE)
+    if markdown_out:
+        markdown_out.parent.mkdir(parents=True, exist_ok=True)
+        markdown_out.write_text(renderer(report), encoding="utf-8")
+        typer.secho(f"Markdown report written to {markdown_out}", fg=typer.colors.BLUE)
+
+
+def _provenance_exit_code(report) -> int:
+    """Same convention as `dataset scan` and `model assess`: 0 clean, 1 review, 3 stop."""
+    overall = report.summary.overall
+    if overall == "PROVENANCE COMPROMISED":
+        return 3
+    if overall.startswith("PROVENANCE VERIFIED"):
+        return 0
+    if overall == "NO RECORDS":
+        return 0
+    return 1
 
 
 @lab_app.command("model-build")
