@@ -162,3 +162,80 @@ cv-trust/
 ├── attack_lab/       generated corpora and scenarios (not in version control)
 └── reports/          generated reports (not in version control)
 ```
+
+
+---
+
+## Module 2 — model runtimes in an air-gapped deployment
+
+`onnx`, `onnxruntime` and `torch` are **optional extras**. Without them the
+corresponding model formats are unavailable, and the pipeline reports
+`NOT_ASSESSED` with a reason naming the missing package — never a crash, never a
+silent pass.
+
+Build a wheelhouse on a connected machine:
+
+```bash
+pip download -d wheelhouse -r requirements.txt
+```
+
+Transfer `wheelhouse/` and install offline:
+
+```bash
+python3 -m venv .venv
+./.venv/bin/pip install --no-index --find-links wheelhouse -r requirements.txt
+./.venv/bin/pip install --no-index --find-links wheelhouse -e .
+```
+
+Confirm what the deployment can actually assess:
+
+```bash
+./.venv/bin/cvtrust info
+```
+
+The tail of that output lists the model formats available in this environment.
+If it says `none`, model assessment will report `NOT_ASSESSED` for every level
+that needs a runtime, which is correct behaviour and not a failure.
+
+### Which format to ask a supplier for
+
+| Format | Gradients | Activations | Deserialisation risk |
+|---|---|---|---|
+| **ONNX** | ✗ | ✓ | Low — protobuf, no code execution |
+| **TorchScript** | ✓ | ✗ | Low — no arbitrary Python globals |
+| `torch.save` module pickle | ✓ | ✓ | **High — executes code on load; refused by default** |
+| `torch.save` state dict | — | — | Low, but carries no graph: only parameter analysis is possible |
+
+**Ask for ONNX *and* TorchScript.** Between them they cover every method: ONNX
+gives activation access, TorchScript gives gradients. That is exactly what the
+model attack lab exports for each scenario.
+
+Never accept a module pickle from an untrusted supplier. If you must load one,
+`--allow-unsafe-deserialisation` exists, it records the fact in the manifest,
+and it should be used only inside a sandbox with no network.
+
+### Benchmark artifacts
+
+NIST TrojAI and BackdoorBench are never downloaded. Vendor them into a local
+directory and point `model.benchmark_dir` at it — layout, licensing notes and
+the `index.json` schema are in `docs/model-security.md` §8.
+
+### Everyday model use
+
+```bash
+# Establish a baseline when you first accept a model.
+cvtrust model manifest detector_v17.onnx --out baselines/detector_v17.json
+
+# Re-verify before each deployment: catches post-assurance modification.
+cvtrust model verify baselines/detector_v17.json /srv/models/detector_v17.onnx
+
+# Full assessment of a newly supplied artifact against the trusted one.
+cvtrust model assess /incoming/detector_v18.onnx \
+    --reference /srv/models/detector_v17.onnx \
+    --out reports/detector_v18.json --markdown-out reports/detector_v18.md
+```
+
+**Store baseline manifests on separate media from the artifacts they describe.**
+Manifest self-tampering is detected, but an adversary with write access to both
+could replace a manifest with a self-consistent forgery. Ed25519 signatures
+arrive in Module 3; until then, separation is the control.

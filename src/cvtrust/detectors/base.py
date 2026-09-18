@@ -124,10 +124,28 @@ class Detector(Protocol):
 DETECTORS: Registry[Detector] = Registry("detector")
 
 
+@runtime_checkable
+class FactoryContext(Protocol):
+    """The only two things :class:`FindingFactory` has ever needed.
+
+    Widened from :class:`AnalysisContext` in Module 2 so that the model-side
+    context (:class:`~cvtrust.detectors.model_base.ModelAnalysisContext`) can
+    use the *same* construction path.  There is deliberately no second factory:
+    "confidence goes through one door" is a property of the whole system, not
+    of the dataset half of it, and a Module 2 finding must be built under the
+    same calibration and disposition rules as a Module 1 one.
+
+    This is a type-level widening only — the factory's behaviour is unchanged.
+    """
+
+    calibration: CalibrationSet
+    policy: DispositionPolicy
+
+
 class FindingFactory:
     """The single construction path for findings."""
 
-    def __init__(self, ctx: AnalysisContext, detector: str, version: str) -> None:
+    def __init__(self, ctx: FactoryContext, detector: str, version: str) -> None:
         self._ctx = ctx
         self._detector = detector
         self._version = version

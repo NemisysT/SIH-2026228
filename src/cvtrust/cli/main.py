@@ -26,13 +26,19 @@ from ..core.logging import configure_logging
 app = typer.Typer(
     name="cvtrust",
     help="Trustworthy Computer Vision Integrity Assurance (SIH26228) — "
-    "offline dataset forensics, Module 1.",
+    "offline dataset forensics (Module 1) and model forensics with backdoor "
+    "assurance (Module 2).",
     no_args_is_help=True,
     add_completion=False,
 )
 dataset_app = typer.Typer(help="Dataset ingestion, integrity and forensics.", no_args_is_help=True)
+model_app = typer.Typer(
+    help="Model ingestion, identity and backdoor assurance (Module 2).",
+    no_args_is_help=True,
+)
 lab_app = typer.Typer(help="Synthetic attack laboratory and evaluation.", no_args_is_help=True)
 app.add_typer(dataset_app, name="dataset")
+app.add_typer(model_app, name="model")
 app.add_typer(lab_app, name="lab")
 
 
@@ -63,10 +69,22 @@ def version() -> None:
 @app.command()
 def info() -> None:
     """Print the coverage statement for this build: what it assesses, and what it does not."""
+    from ..models import REGISTERED_ADAPTERS
     from ..reporting.render import render_coverage
     from ..risk.coverage import CoverageStatement
 
-    render_coverage(CoverageStatement.build([], (1,)))
+    render_coverage(CoverageStatement.build([], (1, 2)))
+    typer.echo()
+    typer.secho("Model formats available in this environment:", bold=True)
+    if REGISTERED_ADAPTERS:
+        for name in REGISTERED_ADAPTERS:
+            typer.echo(f"  {name}")
+    else:
+        typer.secho(
+            "  none — install the 'onnx' and/or 'torch' extras from local wheels. "
+            "Nothing is ever downloaded at run time.",
+            fg=typer.colors.YELLOW,
+        )
 
 
 @dataset_app.command("scan")
@@ -203,6 +221,232 @@ def dataset_verify(
     raise typer.Exit(
         code=0 if (result.manifest_self_consistent and result.dataset_matches) else 3
     )
+
+
+# ---------------------------------------------------------------------------
+# Module 2 — model assurance
+# ---------------------------------------------------------------------------
+
+
+@model_app.command("manifest")
+def model_manifest(
+    path: Path = typer.Argument(..., help="Model artifact (.onnx, .pt, .pth)."),
+    out: Path = typer.Option(Path("model-manifest.json"), "--out", "-o"),
+    config: Optional[Path] = typer.Option(None, "--config", "-c"),
+    adapter: Optional[str] = typer.Option(None, "--model-adapter"),
+) -> None:
+    """Build and write a model manifest: the artifact's cryptographic identity."""
+    from ..model_pipeline import load_model
+    from ..models.manifest import build_model_manifest
+
+    try:
+        cfg = _load_config(config)
+        handle, model_adapter = load_model(path, cfg, adapter)
+        manifest = build_model_manifest(handle, model_adapter)
+    except CvTrustError as exc:
+        _fail(exc)
+        return
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+    typer.secho(f"manifest_id       {manifest.manifest_id}", fg=typer.colors.GREEN)
+    typer.echo(f"model_id          {manifest.model_id}")
+    typer.echo(f"format            {manifest.model_format}")
+    typer.echo(f"file sha256       {manifest.file_sha256}")
+    typer.echo(f"graph digest      {manifest.graph_digest or 'unavailable'}")
+    typer.echo(f"parameter digest  {manifest.parameter_digest or 'unavailable'}")
+    typer.echo(f"parameters        {manifest.parameter_count}")
+    typer.echo(f"access mode       {manifest.access_mode.value}")
+    typer.echo(f"capabilities      {', '.join(manifest.capabilities)}")
+    if manifest.unavailable_fields:
+        typer.secho(
+            f"unavailable       {', '.join(manifest.unavailable_fields)}",
+            fg=typer.colors.YELLOW,
+        )
+    typer.echo(f"written to        {out}")
+
+
+@model_app.command("verify")
+def model_verify(
+    manifest_path: Path = typer.Argument(..., help="A manifest from `model manifest`."),
+    path: Path = typer.Argument(..., help="Model artifact to verify against it."),
+) -> None:
+    """Re-verify a model artifact against a manifest: detects post-assurance change."""
+    from ..models.manifest import load_model_manifest, verify_model_manifest
+
+    try:
+        manifest = load_model_manifest(manifest_path)
+    except CvTrustError as exc:
+        _fail(exc)
+        return
+
+    result = verify_model_manifest(manifest, path)
+    ok = typer.style("PASS", fg=typer.colors.GREEN, bold=True)
+    bad = typer.style("FAIL", fg=typer.colors.RED, bold=True)
+    unknown = typer.style("UNAVAILABLE", fg=typer.colors.YELLOW)
+
+    typer.echo(f"manifest self-consistency  {ok if result.manifest_self_consistent else bad}")
+    typer.echo(f"artifact present           {ok if result.artifact_present else bad}")
+    typer.echo(f"file digest                {ok if result.file_match else bad}")
+    if not result.file_match and result.actual_file_sha256:
+        typer.echo(f"  expected {result.expected_file_sha256}")
+        typer.echo(f"  actual   {result.actual_file_sha256}")
+    for label, value in (
+        ("graph digest", result.graph_match),
+        ("parameter digest", result.parameter_match),
+    ):
+        typer.echo(
+            f"{label:26s} {ok if value else bad if value is False else unknown}"
+        )
+    for entry in result.changed_parameters[:20]:
+        typer.secho(f"  CHANGED  {entry['name']} ({entry['change']})", fg=typer.colors.RED)
+    for note in result.notes:
+        typer.secho(f"  note: {note}", fg=typer.colors.YELLOW)
+
+    raise typer.Exit(code=0 if result.ok else 3)
+
+
+@model_app.command("assess")
+def model_assess(
+    path: Path = typer.Argument(..., help="Model artifact under assessment."),
+    reference: Optional[Path] = typer.Option(
+        None, "--reference", "-r",
+        help="Trusted reference model. Without it, identity and structural "
+             "modification are NOT_ASSESSED rather than clean.",
+    ),
+    config: Optional[Path] = typer.Option(None, "--config", "-c"),
+    adapter: Optional[str] = typer.Option(None, "--model-adapter"),
+    calibration: Optional[Path] = typer.Option(
+        None, "--calibration", help="Calibration table from `cvtrust lab model-evaluate`."
+    ),
+    detectors: Optional[str] = typer.Option(
+        None, "--detectors", help="Comma-separated subset of model detectors."
+    ),
+    black_box: bool = typer.Option(
+        False, "--black-box",
+        help="Genuinely drop graph/parameter/activation/gradient access before "
+             "analysis, to exercise and report the black-box pathway.",
+    ),
+    allow_unsafe: bool = typer.Option(
+        False, "--allow-unsafe-deserialisation",
+        help="Permit torch.load(weights_only=False). This EXECUTES CODE from an "
+             "untrusted artifact; prefer re-exporting to ONNX or TorchScript.",
+    ),
+    out: Optional[Path] = typer.Option(None, "--out", "-o", help="Write the JSON report here."),
+    markdown_out: Optional[Path] = typer.Option(None, "--markdown-out"),
+    full: bool = typer.Option(False, "--full", help="Print every finding."),
+) -> None:
+    """Assess a model: identity, structure, parameters, behaviour, backdoor."""
+    from ..model_pipeline import assess_model
+    from ..reporting.model_render import render_model_markdown, render_model_report
+
+    overrides: dict = {}
+    if calibration:
+        overrides["calibration_path"] = str(calibration)
+    if allow_unsafe:
+        overrides["model"] = {"allow_unsafe_deserialisation": True}
+
+    try:
+        cfg = _load_config(config, overrides or None)
+        report, _, _ = assess_model(
+            path, cfg,
+            reference_path=reference,
+            adapter_name=adapter,
+            detectors=tuple(d.strip() for d in detectors.split(",")) if detectors else None,
+            force_black_box=black_box,
+        )
+    except CvTrustError as exc:
+        _fail(exc)
+        return
+
+    render_model_report(report, full=full)
+
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+        typer.secho(f"\nJSON report written to {out}", fg=typer.colors.BLUE)
+    if markdown_out:
+        markdown_out.parent.mkdir(parents=True, exist_ok=True)
+        markdown_out.write_text(render_model_markdown(report), encoding="utf-8")
+        typer.secho(f"Markdown report written to {markdown_out}", fg=typer.colors.BLUE)
+
+    # Same exit-code convention as `dataset scan`: 0 clean, 1 review, 3 quarantine.
+    raise typer.Exit(
+        code=3 if report.summary.overall == "QUARANTINE REQUIRED"
+        else 0 if report.summary.overall.startswith("NO ANOMALY DETECTED")
+        else 1
+    )
+
+
+@lab_app.command("model-build")
+def lab_model_build(
+    lab_dir: Path = typer.Option(Path("model_lab"), "--out", "-o"),
+    seed: int = typer.Option(20260917, "--seed"),
+    per_class: int = typer.Option(60, "--per-class"),
+    epochs: int = typer.Option(30, "--epochs"),
+    scenarios: Optional[str] = typer.Option(None, "--scenarios", help="Comma-separated subset."),
+) -> None:
+    """Train the reference model and build the reproducible model attack scenarios."""
+    from ..attack_lab.model_attacks import build_lab
+
+    try:
+        reference, built = build_lab(
+            lab_dir, seed=seed, per_class=per_class, epochs=epochs,
+            scenarios=[s.strip() for s in scenarios.split(",")] if scenarios else None,
+        )
+    except CvTrustError as exc:
+        _fail(exc)
+        return
+
+    typer.secho(f"reference model -> {reference.root}", fg=typer.colors.GREEN)
+    for scenario in built:
+        typer.echo(f"  {scenario.name:28s} {', '.join(scenario.attack_classes)}")
+    typer.secho(f"{len(built)} scenario(s) written under {lab_dir}", fg=typer.colors.GREEN)
+
+
+@lab_app.command("model-evaluate")
+def lab_model_evaluate(
+    lab_dir: Path = typer.Argument(Path("model_lab"), help="Model lab directory."),
+    config: Optional[Path] = typer.Option(None, "--config", "-c"),
+    out: Path = typer.Option(Path("reports/model_evaluation.json"), "--out", "-o"),
+    calibration_out: Optional[Path] = typer.Option(
+        Path("reports/model_calibration.json"), "--calibration-out"
+    ),
+    artifact: str = typer.Option(
+        "model.onnx", "--artifact",
+        help="Which artifact to assess per scenario: model.onnx or model.pt.",
+    ),
+    scenarios: Optional[str] = typer.Option(None, "--scenarios"),
+    black_box: bool = typer.Option(
+        False, "--black-box", help="Evaluate the black-box pathway instead."
+    ),
+) -> None:
+    """Measure the model detectors against model-lab ground truth, and calibrate."""
+    from ..attack_lab.model_evaluate import evaluate_model_lab
+    from ..reporting.model_render import render_model_evaluation
+
+    reference_artifact = "reference.pt" if artifact.endswith(".pt") else "reference.onnx"
+    try:
+        cfg = _load_config(config)
+        report, calibration = evaluate_model_lab(
+            lab_dir, cfg,
+            scenarios=[s.strip() for s in scenarios.split(",")] if scenarios else None,
+            artifact=artifact,
+            reference_artifact=reference_artifact,
+            force_black_box=black_box,
+        )
+    except CvTrustError as exc:
+        _fail(exc)
+        return
+
+    render_model_evaluation(report)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    typer.secho(f"\nevaluation written to {out}", fg=typer.colors.BLUE)
+    if calibration_out:
+        calibration_out.parent.mkdir(parents=True, exist_ok=True)
+        calibration_out.write_text(calibration.model_dump_json(indent=2), encoding="utf-8")
+        typer.secho(f"calibration written to {calibration_out}", fg=typer.colors.BLUE)
 
 
 @lab_app.command("generate")

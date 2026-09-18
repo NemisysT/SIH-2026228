@@ -243,6 +243,169 @@ this list requires a network call, a hosted service, or downloaded weights.
 
 ---
 
+## Method cards — Module 2 (model forensics)
+
+Module 2 implements **four** backdoor-relevant methods, chosen for being
+well-understood rather than impressive, plus the identity and behavioural
+machinery around them. Two of the four turned out **not to work in this
+setting**, and their cards say so with the measurement; that is the point of
+keeping cards for rejected and failed methods rather than only successful ones.
+
+### 12. Neural Cleanse — trigger reconstruction
+
+- **Origin**: Wang, B., Yao, Y., Shan, S., Li, H., Viswanath, B., Zheng, H. &
+  Zhao, B. Y. (2019), *Neural Cleanse: Identifying and Mitigating Backdoor
+  Attacks in Neural Networks*, IEEE S&P.
+- **Original purpose**: detect a backdoor by finding, per class, the minimal
+  input perturbation that forces that class, and flagging the class whose
+  minimal perturbation is anomalously small.
+- **Threat model / attack assumptions**: a *universal, static patch* trigger
+  installed by data poisoning; one target class; the trigger is small relative
+  to the input.
+- **Model architecture assumptions**: differentiable, with enough classes for a
+  MAD statistic over per-class mask norms to be stable. The paper's smallest
+  evaluated dataset has 10 classes.
+- **Required access**: **white-box with input gradients.** This is the binding
+  constraint — ONNX Runtime does not differentiate, so this method cannot run on
+  an ONNX artifact.
+- **Required data**: a set of clean inputs. No labels needed.
+- **Computational cost**: one optimisation per candidate class. Measured here:
+  ~6.4 s for 6 classes × 300 steps on a single CPU core.
+- **Strengths**: the only implemented method that *reconstructs* a trigger
+  rather than testing for one it already knows. Not limited to a declared
+  family.
+- **Weaknesses**: blind to sample-specific, semantic and large-by-design
+  triggers — the ``‖m‖₁`` penalty that makes it work is what makes it blind.
+  The paper itself reports false positives on clean models whose classes are
+  close in input space.
+- **Known failure cases**: adaptive backdoors trained to keep the reconstructed
+  mask norm inside the clean range; low class counts (below).
+- **Implementation decision**: implemented, **including the paper's dynamic λ
+  scheduler**, which is not optional. With a fixed penalty each class converges
+  to whatever its own loss landscape allows, per-class norms are not comparable,
+  and the MAD is dominated by that incomparability — measured here, a fixed
+  penalty gave the true backdoor class an anomaly index of **1.31**, below the
+  threshold of 2, a miss. With the schedule the ranking becomes correct on every
+  backdoored model (true target has the smallest mask, by 5–50×).
+  **But the index still does not discriminate at 6 classes**: the clean
+  `clean_retrain_0` has a class with mask L1 6.8 at success 1.00, against the
+  backdoored model's 5.9 at 1.00. So the implementation declares the index
+  **uninterpretable below 8 classes**, reports the per-class ranking as evidence
+  instead, and flags nothing. Full numbers in `docs/model-security.md` §6.2.
+
+### 13. Gradient-free trigger-family probe
+
+- **Origin**: our adaptation of the BadNets threat model (Gu, T., Dolan-Gavitt,
+  B. & Garg, S., 2017, *BadNets: Identifying Vulnerabilities in the Machine
+  Learning Model Supply Chain*) to a black-box sweep. **Not a published
+  detection method**, and labelled as such everywhere it appears.
+- **Original purpose**: n/a — the *attack* is published; the sweep is ours.
+- **Threat model**: a patch trigger from a declared, finite family.
+- **Required access**: `inference` only. Works under full black-box access,
+  which is what makes the black-box pathway able to say anything about
+  backdoors at all.
+- **Required data**: clean probes, supplied by the battery.
+- **Computational cost**: one forward pass per (family member × clean probe).
+  Measured: ~20 ms for a 7-member family over 24 probes.
+- **Strengths**: cheap, interpretable, and — measured — the **strongest backdoor
+  signal in this build**: P=1.00, R=1.00, FPR=0.00 over 15 lab models, with
+  clean models at attack success 0.000–0.083 and backdoored at 0.500–0.833.
+- **Weaknesses**: finds a trigger **only if the trigger is in the family**. It
+  performs no optimisation and reconstructs nothing.
+- **Known failure cases**: any trigger outside the declared family. The lab's
+  blended low-opacity scenarios are deliberately outside it; one was detected
+  anyway by feature overlap, which is luck rather than coverage, and is reported
+  as such.
+- **Implementation decision**: implemented under the method name
+  `trigger_family_probe`, with the declared family printed in the report and the
+  `method_version` encoding which mechanism ran. **A gradient-free sweep is
+  never described as reconstruction**, in the title, the evidence or the JSON.
+
+### 14. Spectral signatures — *implemented, measured non-discriminating*
+
+- **Origin**: Tran, B., Li, J. & Madry, A. (2018), *Spectral Signatures in
+  Backdoor Attacks*, NeurIPS.
+- **Original purpose**: find poisoned examples **inside a poisoned training
+  set** by projecting each class's learned representations onto their top
+  singular direction and removing the top ε fraction.
+- **Attack assumptions**: the poisoned subset is a minority within its class and
+  is separated along the dominant singular direction.
+- **Required access**: white-box activations **and the training set**.
+- **Implementation decision**: implemented, then **demoted to context-only after
+  measurement.** We do not have the supplier's training set — that is Module 2's
+  premise — so the method is applied to the probe battery instead, with the
+  trigger probes standing in for the poisoned subset. Across the lab, the
+  trigger-coincidence lift over a 0.447 base rate was **0.00–0.90 for backdoored
+  models against 0.42–1.64 for clean ones**: the backdoored range lies *inside*
+  the clean range and the highest lift belongs to a clean model. An earlier
+  revision thresholded it and fired backwards — flagging `clean_retrain_0` and
+  missing `backdoor_badnets`. It now reports evidence at INFO severity beside an
+  already-established behavioural signal, with `Coverage.PARTIAL` and the
+  measurement as the stated reason.
+
+### 15. Activation clustering — *implemented, measured non-discriminating*
+
+- **Origin**: Chen, B., Carvalho, W., Baracaldo, N., Ludwig, H., Edwards, B.,
+  Lee, T., Molloy, I. & Srivastava, B. (2019), *Detecting Backdoor Attacks on
+  Deep Neural Networks by Activation Clustering*, AAAI-19 SafeAI workshop.
+- **Original purpose**: within each class of a poisoned **training set**,
+  separate clean from poisoned activations by 2-means; a well-separated split
+  with a small minority cluster is the backdoor signature.
+- **Required access**: white-box activations **and the training set**.
+- **Implementation decision**: implemented with **PCA in place of the paper's
+  ICA**, because FastICA's fixed-point iteration is seed-dependent and its
+  component order is not stable across runs, and determinism is not negotiable
+  here. Demoted to context-only for the same measured reason as §14, plus a
+  second mechanical one: on a backdoored model the triggered probes are driven
+  onto the target class and become its **majority**, so the minority cluster the
+  method reports is the *clean* subset — it flags the wrong half.
+
+### 16. Jensen–Shannon divergence for behavioural comparison
+
+- **Origin**: Lin, J. (1991), *Divergence measures based on the Shannon
+  entropy*, IEEE Trans. Information Theory.
+- **Original purpose**: a symmetric, bounded dissimilarity between probability
+  distributions.
+- **Implementation decision**: chosen over **Kullback–Leibler**, which is
+  **deliberately not implemented**. KL is unbounded and undefined wherever one
+  model assigns a class zero probability — which float32 softmax underflow
+  produces routinely. A metric that is sometimes `inf` cannot be thresholded,
+  averaged or compared across artifacts. JS is symmetric (there is no privileged
+  model in a comparison), always finite, and bounded by 1 bit, so a value means
+  the same thing across runs and models.
+
+### 17. Robust z-scoring with a finite-sample MAD correction
+
+- **Origin**: Iglewicz, B. & Hoaglin, D. (1993), *How to Detect and Handle
+  Outliers* for the robust z; Croux, C. & Rousseeuw, P. J. (1992),
+  *Time-efficient algorithms for two highly robust estimators of scale* for the
+  finite-sample consistency factor.
+- **Implementation decision**: median/MAD rather than mean/standard deviation,
+  because the outlier being searched for is in the sample and would inflate a
+  standard deviation enough to hide itself. The conventional threshold of **3.5
+  was measured and rejected**: this screening tests four statistics per peer
+  group on groups often smaller than ten tensors, and at 3.5 roughly a third of
+  *clean* models carry a finding. Raised to **8.0** with the Croux–Rousseeuw
+  correction applied, measured at ≤3% family-wise false alarms. A second defect
+  found at the same time: grouping peers by operator type alone pooled BatchNorm
+  scales with running variances, whose shared median and MAD describe nothing;
+  role-aware grouping took a clean model from 8 reported outliers to 0.
+
+---
+
+## Module 2 — considered and rejected
+
+| Method | Why not |
+|---|---|
+| **STRIP** (Gao et al., ACSAC 2019) | Detects a trigger by superimposing inputs and measuring prediction entropy. The superimposition assumption does not hold for low-opacity blended triggers, and it costs N× inference per query, which is the wrong trade for an offline artifact assessment where we can simply probe the trigger family directly. |
+| **Fine-Pruning** (Liu, Dolan-Gavitt & Garg, RAID 2018) | A **mitigation**, not a detector, and it *modifies the artifact under assessment*. An assurance tool that alters its subject has destroyed the thing it was asked to describe. |
+| **MNTD** (Xu et al., IEEE S&P 2021) | Trains a meta-classifier over thousands of shadow models to predict whether a model is trojaned. This is precisely "a neural network that predicts whether another neural network is malicious", which the Module 2 brief forbids on the grounds that it is unexplainable and its own provenance is unassured. It also needs a shadow-model corpus far beyond an air-gapped deployment's budget. |
+| **ABS** (Liu et al., CCS 2019) | Artificial Brain Stimulation: scans neurons for ones that dominate an output regardless of input. Large, fragile implementation surface relative to what it would add over Neural Cleanse here, and it inherits the same low-class-count problem we already measured. |
+| **A learned "model trust score"** | Collapses severity, confidence and coverage into one unexplainable number, which is the specific failure mode the assessment matrix exists to prevent. |
+| **Weight-statistic backdoor classification** | No published result establishes that unusual weight statistics imply a backdoor. Quantisation-aware training, unusual initialisation, weight decay and layer saturation all produce them in clean models — and the lab contains `clean_unusual_init` specifically to keep that honest. |
+
+---
+
 ## Measured corrections — things the evaluation harness caught
 
 Recorded because they are the substance of the engineering, and because a
@@ -277,6 +440,37 @@ assumed.
    to LOW, with the reason recorded as evidence. The finding is kept, because
    suppressing a real observation is worse than qualifying it.
 
+7. **Activation-based backdoor detection fired backwards.** Spectral signatures
+   and activation clustering, applied to the probe battery rather than the
+   training set they were published for, flagged a *clean* model
+   (`clean_retrain_0`, coincidence lift 1.64) and stayed silent on a backdoored
+   one. Measured across the whole lab, the backdoored range sits inside the
+   clean range. Demoted from an independent detector to context-only, with the
+   measurement published as the reason. `docs/model-security.md` §6.1.
+8. **Neural Cleanse missed the backdoor it was pointed at.** A *fixed* mask
+   penalty leaves per-class mask norms incomparable, and the true target class
+   scored an anomaly index of 1.31 against a threshold of 2. Fixed by
+   implementing the paper's dynamic λ scheduler, after which the ranking is
+   correct on every backdoored model. The index itself still does not
+   discriminate at 6 classes, so it is declared uninterpretable below 8 rather
+   than reported as a verdict. §6.2.
+9. **Peer-group weight screening had a ~35% false-alarm rate.** The conventional
+   Iglewicz–Hoaglin threshold of 3.5 is for one statistic on a large sample;
+   this screening tests four on groups smaller than ten. Fixed with the
+   Croux–Rousseeuw finite-sample MAD correction and a measured threshold of 8.0
+   (≤3%). Separately, grouping peers by operator type alone pooled BatchNorm
+   scales with running variances and produced 8 "outliers" on a clean model;
+   role-aware grouping took that to 0. §6.3.
+10. **The trigger probe silently ignored a caller's declared opacity.** The
+    family sweep overrode each spec's `opacity` with its own parameter, so a
+    blended-trigger probe was measuring a full-opacity patch and reporting it as
+    the blended result. Caught by an adversarial test that asserted a faint
+    trigger should be *less* effective and found it exactly equal.
+11. **Model lab seeds escaped the canonical integer range.** Seeds derived from
+    a SHA-256 prefix exceeded IEEE-754 exact range and were rejected by
+    `canonical_json` when fed back into another digest — Module 1's ADR-004
+    guard catching a Module 2 defect at the boundary, which is what it is for.
+
 ---
 
 ## Rejected, with reasons
@@ -285,8 +479,8 @@ assumed.
 |---|---|
 | **LSH / banding prefilter** for near-duplicate search | An approximate answer in an assurance context trades a guarantee for a constant factor. Exact blocked popcount handles the target dataset sizes at ~5,000 samples/s; above `max_pairwise_samples` the detector **refuses and reports NOT_ASSESSED** rather than silently sampling. |
 | **Pretrained CNN embeddings** as the default feature space | Requires downloading weights, which the air-gap forbids, and makes every downstream number depend on an artifact whose provenance we would then have to assure — circular, in an integrity tool. Available as an opt-in backend with a locally vendored, hash-recorded weight file. |
-| **Spectral signatures** (Tran, Li & Madry, NeurIPS 2018) and **activation clustering** (Chen et al., 2018) for poisoning | Both operate on a model's internal activations. Module 2 scope; implementing them here would mean partial backdoor detection with no model-side counterpart (ADR-008). |
-| **Neural Cleanse** trigger reconstruction (Wang et al., IEEE S&P 2019) | White-box, model-dependent. Module 2. |
+| **Spectral signatures** (Tran, Li & Madry, NeurIPS 2018) and **activation clustering** (Chen et al., 2018) for poisoning | Both operate on a model's internal activations. Module 2 scope; implementing them here would mean partial backdoor detection with no model-side counterpart (ADR-008). **Implemented in Module 2 and measured non-discriminating** — see method cards §14–15. |
+| **Neural Cleanse** trigger reconstruction (Wang et al., IEEE S&P 2019) | White-box, model-dependent. Module 2. **Implemented there**; see method card §12 for its measured limit at low class counts. |
 | **A distributed ledger / blockchain** | ADR-009. A single-authority air-gapped analyst deployment has no Byzantine multi-writer consensus problem to solve. Hash-chained append-only logs with Ed25519 signatures give tamper-evidence at a fraction of the complexity. Recorded in `docs/architecture.md`. |
 | **RFC 8785 float canonicalisation** | Implementable but subtle, and every subtlety becomes a signature-verification bug once Module 3 signs these structures. Floats are instead rejected on the digest path and carried as fixed-unit integers (ADR-004). |
 | **Full-image histogram equalisation before hashing** | Would add photometric invariance that pHash already has via DC exclusion, while destroying the exposure statistics the OOD detector's acquisition block depends on. |

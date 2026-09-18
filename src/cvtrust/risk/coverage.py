@@ -73,13 +73,42 @@ ATTACK_CLASS_REGISTRY: dict[str, dict[str, Any]] = {
         "module": 2,
         "description": "Localised trigger patterns embedded in training samples to "
         "install a backdoor.",
+        # An open item, and named as one. ADR-008 deferred *data-side* trigger
+        # detection to Module 2 because doing it without the model-side
+        # counterpart would have been a partial capability presented as a
+        # complete one. Module 2 delivered the model side in full and
+        # deliberately did not add a dataset-image detector, which is dataset
+        # forensics rather than model forensics. Saying "no detector reported on
+        # this class" would be true but would hide the history, so the reason
+        # says what actually happened (ADR-011).
+        "assessed_by": "NOT IMPLEMENTED — this is the data-side counterpart to "
+        "Module 2's model-side backdoor assessment. The model side "
+        "(`model_backdoor`) is implemented; detecting trigger artifacts in "
+        "training *images* remains an open item, deliberately out of scope for "
+        "a model-forensics module. See ADR-011 and docs/model-security.md §10.",
     },
-    "model_substitution": {"title": "Model substitution", "module": 2,
-                           "description": "A different model served in place of the assured one."},
-    "model_tampering": {"title": "Model modification", "module": 2,
-                        "description": "Weights or graph altered after assurance."},
-    "model_backdoor": {"title": "Backdoored model behaviour", "module": 2,
-                       "description": "Model behaves anomalously on triggered inputs."},
+    "model_substitution": {
+        "title": "Model substitution", "module": 2,
+        "description": "A different model served in place of the assured one. "
+        "Assessed by cryptographic content identity over three digests (file, "
+        "graph, parameters), which separates a re-serialisation from a genuine "
+        "substitution. Requires a trusted reference model.",
+    },
+    "model_tampering": {
+        "title": "Model modification", "module": 2,
+        "description": "Weights or graph altered after assurance. Assessed "
+        "deterministically against a trusted reference and localised to named "
+        "tensors; degrades to peer-group screening and metamorphic consistency "
+        "when no reference is available.",
+    },
+    "model_backdoor": {
+        "title": "Backdoored model behaviour", "module": 2,
+        "description": "Model behaves anomalously on triggered inputs. Assessed "
+        "by a gradient-free sweep of a declared patch-trigger family, and — "
+        "where the artifact exposes input gradients — by Neural Cleanse trigger "
+        "reconstruction. Coverage is bounded by the declared family; "
+        "sample-specific, semantic and adaptive triggers are NOT assessed.",
+    },
     "inference_tampering": {"title": "Inference record modification", "module": 3,
                             "description": "Output, input or configuration altered after inference."},
     "inference_replay": {"title": "Inference replay", "module": 3,

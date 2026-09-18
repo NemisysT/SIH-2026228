@@ -147,6 +147,186 @@ class OODConfig(_Base):
     )
 
 
+class BatteryConfig(_Base):
+    """The probe battery every behavioural claim is measured against (Module 2).
+
+    Every value here changes what a behavioural finding means, so every value is
+    in the configuration hash and printed in the report.
+    """
+
+    clean_per_class: int = Field(default=4, ge=1, le=64)
+    borderline_pairs: int = Field(
+        default=6,
+        ge=0,
+        le=64,
+        description="Class pairs interpolated to probe the decision boundary, "
+        "which is where two models that differ at all differ most visibly.",
+    )
+    ood_count: int = Field(
+        default=8,
+        ge=0,
+        le=128,
+        description="Out-of-distribution probes. Present to guard the inverse "
+        "error: OOD behaviour is never treated as evidence of a backdoor.",
+    )
+    trigger_bases: int = Field(
+        default=6,
+        ge=0,
+        le=64,
+        description="Clean probes each declared trigger is stamped onto.",
+    )
+    batch_size: int = Field(
+        default=32,
+        ge=1,
+        le=512,
+        description="Fixed, not adaptive: on some runtimes the reduction order "
+        "inside a batched matmul depends on the batch dimension, so a variable "
+        "batch size would make an argmax at a boundary depend on chunking.",
+    )
+
+
+class BehaviourConfig(_Base):
+    """Thresholds for the behavioural comparison (Module 2)."""
+
+    agreement_floor: float = Field(
+        default=0.98,
+        ge=0.0,
+        le=1.0,
+        description="Prediction agreement below which a supplied model is called "
+        "behaviourally anomalous relative to its reference. Two artifacts of the "
+        "same model measure 1.000, so this is set just below to absorb a boundary "
+        "probe flipping on last-bit float differences between runtimes.",
+    )
+    consistency_floor: float = Field(
+        default=0.70,
+        ge=0.0,
+        le=1.0,
+        description="Metamorphic consistency below which predictions are called "
+        "unstable. Reference-free, so it is the black-box pathway's own signal.",
+    )
+
+
+class ParameterAnalysisConfig(_Base):
+    """White-box weight analysis (Module 2)."""
+
+    peer_z_threshold: float = Field(
+        default=8.0,
+        ge=1.0,
+        le=50.0,
+        description="Robust z (median/MAD, 1.4826-scaled, finite-sample "
+        "corrected) above which a tensor is called a peer-group outlier. "
+        "Deliberately NOT the conventional Iglewicz-Hoaglin 3.5: that operating "
+        "point is for a single statistic on a large sample, while this screening "
+        "tests four statistics per group on groups often smaller than ten "
+        "tensors. Measured against the null, 3.5 gives a ~35% false-alarm rate "
+        "and 8.0 gives <=3%. See cvtrust.models.params.DEFAULT_PEER_Z.",
+    )
+
+
+class ActivationConfig(_Base):
+    """Activation-based backdoor analysis (Module 2)."""
+
+    layer: str | None = Field(
+        default=None,
+        description="Intermediate tensor to inspect. Absent means the last tap "
+        "the adapter offers, which is the penultimate representation — the layer "
+        "both source methods operate on.",
+    )
+    spectral_epsilon: float = Field(
+        default=0.15,
+        gt=0.0,
+        lt=1.0,
+        description="Fraction of each class removed as spectral-signature "
+        "candidates (Tran et al. 2018).",
+    )
+    min_class_support: int = Field(
+        default=12,
+        ge=4,
+        description="Below this a top singular vector and a 2-means split are "
+        "both fitting noise, and the class is reported as skipped rather than "
+        "scored.",
+    )
+
+
+class TriggerConfig(_Base):
+    """Trigger search (Module 2).
+
+    Budgets are small by default so that a full assessment stays runnable on a
+    normal CPU. The budget is recorded in every finding, because a negative
+    result under a small budget is a weaker statement than one under a large
+    budget and an analyst must be able to tell which they are reading.
+    """
+
+    enable_reconstruction: bool = Field(
+        default=True,
+        description="Neural Cleanse. Requires input gradients, so it runs on "
+        "PyTorch/TorchScript and is reported NOT_ASSESSED on ONNX.",
+    )
+    enable_family_probe: bool = Field(
+        default=True,
+        description="Gradient-free sweep of the declared patch family. Works "
+        "under black-box access; explicitly not reconstruction.",
+    )
+    steps: int = Field(default=200, ge=10, le=5000)
+    learning_rate: float = Field(default=0.1, gt=0.0, le=1.0)
+    mask_penalty: float = Field(
+        default=0.03,
+        gt=0.0,
+        description="L1 penalty on the mask. This term is what makes Neural "
+        "Cleanse work, and it is also what makes it blind to a trigger that is "
+        "large by design.",
+    )
+    success_threshold: float = Field(
+        default=0.90,
+        ge=0.0,
+        le=1.0,
+        description="Attack success rate a reconstructed trigger must reach "
+        "before an anomaly-index outlier is treated as a hit. The conjunction is "
+        "what suppresses Neural Cleanse's known false positives on clean models.",
+    )
+    probe_opacities: tuple[float, ...] = Field(
+        default=(1.0,),
+        description="Opacities swept by the family probe. Values below 1.0 probe "
+        "the blended-trigger family (Chen et al. 2017).",
+    )
+
+
+class ModelConfig(_Base):
+    """Module 2: model forensics and backdoor assurance."""
+
+    detectors: tuple[str, ...] = (
+        "model_identity",
+        "model_structure",
+        "model_parameters",
+        "model_behaviour",
+        "model_activation",
+        "model_trigger",
+    )
+    input_shape: tuple[int, int, int, int] | None = Field(
+        default=None,
+        description="Declared model input as (batch, C, H, W). Needed only for "
+        "torch artifacts, which carry no input signature; when absent, a short "
+        "list of conventional shapes is probed and the manifest records that the "
+        "shape was probed rather than declared.",
+    )
+    allow_unsafe_deserialisation: bool = Field(
+        default=False,
+        description="Permit torch.load(weights_only=False) on a full module "
+        "pickle. OFF by default: unpickling executes code from an artifact this "
+        "tool treats as untrusted. See docs/model-security.md.",
+    )
+    benchmark_dir: str | None = Field(
+        default=None,
+        description="Locally vendored TrojAI/BackdoorBench directory. Absent "
+        "means benchmark evaluation is NOT_ASSESSED. Never downloaded.",
+    )
+    battery: BatteryConfig = BatteryConfig()
+    behaviour: BehaviourConfig = BehaviourConfig()
+    parameters: ParameterAnalysisConfig = ParameterAnalysisConfig()
+    activation: ActivationConfig = ActivationConfig()
+    trigger: TriggerConfig = TriggerConfig()
+
+
 class AggregationConfig(_Base):
     alpha: float = Field(default=0.05, ge=0.0, le=0.5)
     min_contributor_samples: int = Field(default=8, ge=1)
@@ -210,6 +390,10 @@ class Config(_Base):
     label_consistency: LabelConsistencyConfig = LabelConsistencyConfig()
     systematic_mislabel: SystematicMislabelConfig = SystematicMislabelConfig()
     ood: OODConfig = OODConfig()
+    #: Module 2. Present in the configuration from this build onward, so that a
+    #: model assessment's thresholds are folded into the same config hash as a
+    #: dataset scan's and the two are comparable artifacts.
+    model: ModelConfig = ModelConfig()
     aggregation: AggregationConfig = AggregationConfig()
     disposition: DispositionConfig = DispositionConfig()
     contributor: ContributorConfig = ContributorConfig()

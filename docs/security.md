@@ -119,3 +119,75 @@ Each of these makes the tool *less* likely to act, on purpose:
 - No sandboxing of image decoding. A Pillow/libjpeg vulnerability would be
   reachable from a malicious image. Mitigation for a hostile deployment: run
   scans as an unprivileged user in a container or VM with no network.
+
+
+---
+
+## Module 2 — model security policy
+
+### Hashing
+
+Model identity uses **SHA-256 only**, via the same `core/hashing.py` policy. No
+custom cryptography is implemented. Three digests are computed, and the reason
+for each is in `docs/model-security.md` §3:
+
+| Digest | Over | Question |
+|---|---|---|
+| `file_sha256` | artifact bytes, streamed | Is this the same artifact? |
+| `graph_digest` | canonical JSON of topology, shapes, dtypes — **no weight values** | Is this the same architecture? |
+| `parameter_digest` | canonical JSON over per-tensor content digests | Are these the same weights? |
+
+Per-tensor digests quantise floats to a fixed decimal grid before hashing. Raw
+IEEE-754 bytes would be the obvious choice and would be **wrong**: the same
+weights stored as float32 and float16 would digest differently, and the manifest
+would report "different weights" for what is a container change. Six decimal
+places is far finer than any meaningful weight perturbation and far coarser than
+float32 epsilon.
+
+Non-finite weights are encoded by a distinct sentinel rather than being allowed
+to poison the digest.
+
+### Identity is never a name
+
+Not a filename, not a path, not a display name, not a declared version string,
+not the architecture field inside the artifact. The lab's
+`substitution_architecture` scenario keeps the reference's architecture name in
+its ONNX metadata specifically so this is measured rather than asserted, and the
+finding records `used_in_identity_decision: false` alongside the declared
+metadata it ignored.
+
+### Deserialisation — the largest input-handling risk in the project
+
+| Format | Risk | Policy |
+|---|---|---|
+| ONNX | protobuf parsing; no code execution | Loaded. `onnx.checker` result recorded as a fact, including failure. |
+| TorchScript | archive parsing; no arbitrary Python globals | Loaded. Recommended format. |
+| `torch.save` state dict | tensor unpickling only | Loaded with `weights_only=True`. |
+| `torch.save` module pickle | **executes arbitrary code on load** | **Refused by default.** Requires explicit `--allow-unsafe-deserialisation`, and the manifest records that it happened. |
+
+The refusal message names the safe alternatives rather than only saying no.
+This is pinned by `test_a_module_pickle_is_refused_by_default`.
+
+Neither image nor model decoding is sandboxed. For a hostile deployment, run as
+an unprivileged user in a container or VM with no network.
+
+### Conservative-by-default decisions, Module 2
+
+- **Graph optimisation disabled** in the ONNX session. Operator fusion rewrites
+  the executed graph, which would make captured activation names unavailable and
+  mean what runs is not what the manifest describes.
+- **Single-threaded execution** in both runtimes. Multi-threaded float reduction
+  changes summation order, which changes the low bits of a logit, which changes
+  an argmax at a decision boundary — and a behavioural fingerprint that is not
+  reproducible is not evidence.
+- **Fixed batch size** for the battery, for the same reason.
+- **Dynamic input axes refused** beyond the batch axis. Guessing a spatial size
+  would fingerprint a shape the model was never declared for.
+- **A probed input shape is labelled as probed.** Torch artifacts declare no
+  signature, so one is established empirically, and the manifest records that it
+  is an empirical fact rather than a claim by the artifact.
+- **Benchmark artifacts are never fetched.** Absent means `NOT_ASSESSED` with
+  the reason `"required local artifact unavailable"`.
+- **An uninterpretable statistic is not reported as a verdict.** Neural
+  Cleanse's anomaly index below eight classes, and the activation analyses
+  throughout, report evidence without thresholding it.

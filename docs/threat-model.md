@@ -106,3 +106,60 @@ only strong attribution source.
   individual samples against a reference and **never asserts malice**.
 - Authentication, authorisation, multi-tenancy, or protecting the analyst
   workstation itself.
+
+
+---
+
+## Module 2 — the model trust boundary
+
+**Trust boundary.** The model artifact, every field of its embedded metadata,
+its filename, its declared version string and its declared architecture name are
+**untrusted input**. The analyst's machine, the `cvtrust` code, the
+configuration, and the *reference model designation* are trusted.
+
+**Adversary.** A party who can place a model artifact where the pipeline will
+load it: a compromised model registry, a malicious supplier, an insider with
+write access to the deployment, or a poisoned training pipeline upstream.
+
+### Assumed adversary capabilities
+
+| # | Capability | Posture |
+|---|---|---|
+| M1 | Replace the artifact wholesale | **SUPPORTED** — content identity |
+| M2 | Re-serialise the same model so bytes differ but behaviour does not | **SUPPORTED** — distinguished from M1 by the three-digest design, severity-capped |
+| M3 | Modify the graph after assurance | **SUPPORTED** with a reference |
+| M4 | Modify a subset of weights after assurance | **SUPPORTED** with a reference, localised to named tensors |
+| M5 | Retrain to produce different behaviour | **SUPPORTED** with a reference (behavioural divergence) |
+| M6 | Install a patch backdoor by data poisoning | **SUPPORTED** for the declared family: measured P=1.00, R=1.00, FPR=0.00 |
+| M7 | Use a low-opacity blended trigger | **PARTIAL** — outside the full-opacity family |
+| M8 | Embed malicious code in a pickled artifact | **MITIGATED** — `weights_only=True` by default; a module pickle is refused |
+| M9 | Lie in the artifact's declared metadata | **MITIGATED** — metadata plays no part in any identity decision, and the lab tests exactly this |
+
+### Capabilities NOT defended against — stated up front
+
+| # | Capability | Why |
+|---|---|---|
+| M10 | Sample-specific / input-aware triggers | The reconstruction searches for one **universal** mask; by construction it cannot find a per-input one. |
+| M11 | Semantic backdoors (a real-world object as the trigger) | Not a perturbation, so neither the family probe nor the mask optimisation applies. |
+| M12 | Triggers large by design | The `‖m‖₁` penalty that makes Neural Cleanse work is what makes it blind to these. |
+| M13 | **Adaptive** backdoors optimised against these detectors | Regularising the reconstructed mask norm toward the clean population, or suppressing the spectral signature during training, are both documented in the literature and both succeed. |
+| M14 | A compromised **reference** model | Every reference-dependent claim assumes the reference came through an independent channel. Unverified until Module 3 signs manifests. |
+| M15 | Exploits in the deserialisation stack | ONNX protobuf, TorchScript and torch pickle are all parsed by third-party code, unsandboxed. Run assessments in a container or VM with no network. |
+
+### Attacks on the model detectors themselves
+
+- **Hiding behind a legitimate retrain.** A retrained clean model and a
+  backdoored one both show identity MISMATCH, parameter ANOMALOUS and behaviour
+  ANOMALOUS. Only the trigger level separates them — which is why the matrix
+  reports six levels rather than one score, and why the trigger level's measured
+  false-positive rate (0/9) is the number that matters.
+- **Exploiting the probe family.** The declared trigger family is published, so
+  an adversary can choose a trigger outside it. That is a real limitation, is
+  stated in every trigger finding, and is the reason coverage for
+  `model_backdoor` is `PARTIAL` rather than `SUPPORTED`.
+- **Exploiting the low-class-count blind spot.** On a model with few classes,
+  Neural Cleanse's index is uninterpretable, so an adversary attacking such a
+  model faces only the family probe. Measured and documented, not hidden.
+- **Poisoning the reference.** An adversary who controls the reference controls
+  every comparison. Store reference artifacts and their manifests separately
+  from the artifacts under assessment.

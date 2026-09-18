@@ -6,7 +6,7 @@ A unified **evidence pipeline** for assuring computer-vision pipelines whose
 contributors, datasets, models and inference records are all untrusted. One
 ingestion path, one evidence schema, one report, one coverage statement.
 
-Module 1 (this build) implements the dataset half. Modules 2–5 attach to the
+Modules 1 (datasets) and 2 (models) are implemented. Modules 3–5 attach to the
 same schema and the same manifest identity; they are declared `NOT_ASSESSED`
 in every report until they exist.
 
@@ -63,6 +63,61 @@ label_consistency ─► label suggestions ──► systematic_mislabel  (teste
 These are real data dependencies. Making the order configurable would let an
 operator silently disable the adversarial hardening.
 
+## 1a. The model pipeline (Module 2)
+
+A second entry point over the *same* evidence schema, calibration set,
+disposition policy and coverage statement. It has its own context object because
+a model assessment has no dataset, features or contributor attributions — but it
+has no second `Finding` type, no second confidence system and no second
+disposition policy, because those are properties of the system rather than of
+its dataset half.
+
+```
+MODEL ARTIFACT (untrusted)
+   │
+   ▼  ModelAdapter            onnx | torchscript | torch — registry-based (ADR-001)
+ModelHandle + Capability set  inference · graph · parameters · activations · gradients
+   │
+   ▼  ModelManifest
+   │      file_sha256      ── identity of the ARTIFACT
+   │      graph_digest     ── identity of the ARCHITECTURE (weight-blind)
+   │      parameter_digest ── identity of the WEIGHTS       (container-blind)
+   │
+   ▼  ReferenceBattery       versioned + digested probes: clean · borderline ·
+   │                         perturbation · OOD · declared trigger family
+   │
+   ▼  ModelDetector[]  (fixed order — a dependency chain, not a preference)
+   │     model_identity    → model_substitution   DETERMINISTIC
+   │     model_structure   → model_tampering      DETERMINISTIC
+   │     model_parameters  → model_tampering      DETERMINISTIC / CALIBRATED
+   │     model_behaviour   → model_tampering      CALIBRATED      ← publishes fingerprints
+   │     model_activation  → model_backdoor       context only (measured, ADR-013)
+   │     model_trigger     → model_backdoor       CALIBRATED
+   │
+   ▼  Finding[]  (the SAME schema Module 1 emits)
+   │
+   ▼  ModelAssessmentMatrix   six levels, never combined into one score (ADR-012)
+   │
+   ▼  DispositionPolicy       the same explicit rule table
+   ▼  CoverageStatement       the same registry, now including Module 2 classes
+   ▼  ModelAssuranceReport    JSON + console/Markdown + RunContext
+```
+
+### Why the model detector order is fixed in code
+
+```
+model_behaviour ─► behavioural fingerprints ──► model_activation  (class-conditional
+                                                analysis needs the model's own
+                                                predictions)
+                └► targeted-transition metric ─► model_activation  (decides whether
+                                                there is a signal worth localising)
+
+model_identity ──► identity comparison ────────► model_structure   (qualifies severity)
+```
+
+The battery is forwarded once and the fingerprints are shared, so three
+detectors cost one pass rather than three.
+
 ## 2. Package layout
 
 | Package | Responsibility |
@@ -73,7 +128,8 @@ operator silently disable the adversarial hardening.
 | `detectors/` | Six detectors plus the framework that enforces the confidence and coverage contracts. |
 | `risk/` | Statistics, calibration tables, contributor aggregation, disposition policy, coverage statement. |
 | `reporting/` | The report model and its renderings. Human views are generated *from* the report object so the two cannot drift. |
-| `attack_lab/` | Corpus generation, five reproducible attacks, and the evaluation harness. |
+| `models/` | **Module 2.** Model adapters (ONNX, TorchScript, torch), the three-digest manifest, the reference battery, behavioural fingerprinting, parameter statistics, activation analysis, trigger search, and optional local benchmark ingestion. |
+| `attack_lab/` | Corpus generation, five reproducible dataset attacks, a fifteen-scenario model attack lab with its own CNN trainer, and both evaluation harnesses. |
 | `cli/` | `typer` application. |
 
 ## 3. Design decisions that shape everything else
@@ -161,13 +217,84 @@ statement asks for, offline, with no consensus layer. The manifest format is
 already signature-ready — Module 3 attaches a signature over `digest` without a
 schema change.
 
+### ADR-010 — Three digests for a model, not one
+`file_sha256` (artifact bytes), `graph_digest` (topology, shapes, dtypes — no
+weight values) and `parameter_digest` (weight values, quantised so the digest is
+independent of storage dtype). One digest cannot distinguish a re-serialisation
+from a substitution, and an analyst who cannot make that distinction cannot act
+on the report. This is the model analogue of Module 1's `file_sha256` /
+`pixel_sha256` split, and the four-way interpretation table it supports is in
+`docs/model-security.md` §3. Identity is never derived from a filename, path,
+display name or declared version string — the lab's substitution scenario keeps
+the reference's architecture name in its metadata specifically to keep that
+honest.
+
+### ADR-011 — Capabilities, not a white-box/black-box binary
+`AccessMode` is reported, but the manifest also carries a fine-grained
+capability set, because a binary would be a lie about the formats we support:
+ONNX exposes weights and activations but **no input gradients**, so Neural
+Cleanse cannot run on it; TorchScript exposes gradients but refuses forward
+hooks, so activation capture cannot run on it. A detector declares the
+capability it needs; an unmet capability yields `REQUIRES_WHITE_BOX` (the remedy
+is more access) or `NOT_ASSESSED` (the remedy is a different export), and those
+are kept distinct because conflating them sends the analyst after the wrong
+thing.
+
+Also recorded here: data-side `trigger_injection`, which ADR-008 deferred to
+Module 2, **remains unimplemented**. Module 2 delivered the model side in full;
+adding a dataset-image detector under a model-forensics brief would be scope
+drift. It stays in the coverage registry as `NOT_ASSESSED` with a reason that
+says exactly this, rather than the default "no detector reported on this class",
+so the gap keeps its history.
+
+### ADR-012 — An assessment matrix, never a trust score
+Module 2 reports six levels — identity, structure, parameters, behaviour,
+activation, trigger — as separate fields with a closed status vocabulary, and
+the report schema has no `overall_score` field. A single "model trust = 72%"
+is strictly less informative than
+
+```
+Identity: MISMATCH · Structure: CONSISTENT · Behaviour: 0.3% disagreement
+Parameter: UNAVAILABLE · Backdoor: NOT_ASSESSED
+```
+
+because the second tells an analyst what to do next. The roll-up that does exist
+is a worst-case precedence rule with a named rationale, not an average: one
+confident HIGH-severity indicator among five quiet levels is exactly the case
+that matters, and any mean would bury it. The vocabulary excludes `SAFE`
+permanently, and a test asserts that no assertive field in any report says a
+model is safe.
+
+### ADR-013 — A method that does not work is demoted, not shipped
+Two published methods were implemented faithfully and then **measured not to
+discriminate** in this setting:
+
+- spectral signatures and activation clustering, applied to a probe battery
+  rather than the training set they were published for, produced a backdoored
+  lift range lying *inside* the clean range — an earlier revision thresholded it
+  and fired on a clean model while missing a backdoored one;
+- Neural Cleanse's anomaly index, at six classes, gave a clean model a mask as
+  small as a backdoored model's.
+
+Neither was quietly deleted and neither was left firing. Each was demoted with
+its measurement published: the activation level reports context at INFO severity
+and never raises an independent finding, and the anomaly index is declared
+uninterpretable below eight classes while its per-class ranking — which *is*
+informative — is still reported as evidence. The numbers are in
+`docs/model-security.md` §6, and the corresponding coverage entries carry them
+as their stated reason.
+
+This is the architectural commitment behind the whole project: a measurement
+that contradicts a design is more valuable than the design, and hiding it would
+make every other number in the system unbelievable.
+
 ## 4. Extension points
 
 Adding a dataset format, feature space or detector requires no change to the
 pipeline:
 
 ```python
-# a new format
+# a new dataset format
 class MyAdapter:
     name, version = "myformat", "1.0"
     @staticmethod
@@ -175,13 +302,37 @@ class MyAdapter:
     def load(self, root: Path) -> RawDataset: ...
 ADAPTERS.add("myformat", MyAdapter())
 
-# a new detector
+# a new dataset detector
 class MyDetector:
     name, version = "mydetector", "1.0"
     attack_classes = ("my_attack_class",)
     def run(self, ctx: AnalysisContext) -> DetectorOutput: ...
 DETECTORS.add("mydetector", MyDetector())
+
+# a new MODEL format
+class MyModelAdapter:
+    name, version, model_format = "myformat", "1.0", "myformat"
+    @staticmethod
+    def detect(path: Path) -> bool: ...
+    def load(self, path: Path, config=None) -> ModelHandle: ...
+    def parameters(self, handle) -> tuple[ParameterTensor, ...]: ...
+    def layers(self, handle) -> tuple[LayerInfo, ...]: ...
+    def activation_layers(self, handle) -> tuple[str, ...]: ...
+    def infer(self, handle, batch, *, capture=()) -> ModelOutput: ...
+MODEL_ADAPTERS.add("myformat", MyModelAdapter())
+
+# a new MODEL detector
+class MyModelDetector:
+    name, version = "mymodeldetector", "1.0"
+    attack_classes = ("model_backdoor",)
+    required_capabilities = (Capability.INFERENCE,)
+    def run(self, ctx: ModelAnalysisContext) -> DetectorOutput: ...
+MODEL_DETECTORS.add("mymodeldetector", MyModelDetector())
 ```
+
+A model adapter must declare an honest **capability set**: claiming a capability
+it cannot deliver is the one failure the framework cannot catch for you, and it
+would let a detector report a weaker method under a stronger name.
 
 A new detector must: emit findings only via `FindingFactory.emit`, report a
 `CoverageEntry` for each of its attack classes (including `NOT_ASSESSED` with a

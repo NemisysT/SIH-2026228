@@ -9,11 +9,17 @@ Blockchain & Cybersecurity · **Category:** Software
 An offline, air-gapped assurance layer for computer-vision pipelines whose
 contributors, datasets, models and inference records are all untrusted.
 
-> **Build status: Module 1 of 5 complete** — foundation and dataset forensics.
-> Model forensics (M2), inference provenance (M3), evidence fusion (M4) and the
-> analyst web platform (M5) are **not** implemented, and every report declares
-> them `NOT_ASSESSED` rather than silently omitting them. Run `cvtrust info` to
-> see exactly what this build assesses.
+> **Build status: Modules 1 and 2 of 5 complete** — foundation and dataset
+> forensics (M1), model forensics and backdoor assurance (M2). Inference
+> provenance (M3), evidence fusion (M4) and the analyst web platform (M5) are
+> **not** implemented, and every report declares them `NOT_ASSESSED` rather than
+> silently omitting them. Run `cvtrust info` to see exactly what this build
+> assesses.
+>
+> **A model assurance report never states that a model is safe.** The strongest
+> positive statement available is `NO_ANOMALY_DETECTED` — a statement about the
+> tests that ran, under a recorded access mode and probe battery. That is
+> enforced by a test, not by review.
 
 ---
 
@@ -43,9 +49,18 @@ truth, tampers with the dataset after the baseline, catches that, and finishes b
 printing what it does not claim.
 
 ```bash
-./scripts/evaluate.sh   # generate all 6 scenarios and measure every detector
-./.venv/bin/pytest      # 182 tests, ~75 s
+./scripts/evaluate.sh   # generate all 6 dataset scenarios, measure every detector
+./.venv/bin/pytest      # 321 tests, ~2 min 45 s
 ./.venv/bin/cvtrust info
+```
+
+Module 2, end to end:
+
+```bash
+cvtrust lab model-build --out model_lab       # trains 1 reference + 15 scenarios, ~40 s
+cvtrust lab model-evaluate model_lab          # measures every model detector
+cvtrust model assess model_lab/backdoor_badnets/model.onnx \
+    --reference model_lab/_reference/reference.onnx
 ```
 
 ## What it detects today
@@ -59,10 +74,40 @@ printing what it does not claim.
 | Out-of-distribution insertion | PARTIAL | Mahalanobis + k-NN + PCA residual vs declared reference | 0.889 | 1.000 | 0.0089 |
 | Malformed / contradictory metadata | **SUPPORTED** | schema, dimension, bbox, category and identifier validation | deterministic | | |
 | Post-baseline dataset tampering | **SUPPORTED** | manifest re-verification (`dataset verify`) | deterministic | | |
-| Backdoor trigger injection | `NOT_ASSESSED` | Module 2 | | | |
-| Model substitution / tampering / backdoor | `NOT_ASSESSED` | Module 2 | | | |
+| Backdoor trigger injection (**data side**) | `NOT_ASSESSED` | open item — see ADR-011 | | | |
 | Inference tampering / replay / reordering | `NOT_ASSESSED` | Module 3 | | | |
 | Population distribution shift | `NOT_ASSESSED` | Module 4 | | | |
+
+### Module 2 — models
+
+Measured over **15 model artifacts** (small CNNs trained from published seeds;
+the unit of evaluation is the *model*, so every rate rests on few observations):
+
+| Threat (PS §2.2) | Coverage | Method | P | R | FPR |
+|---|---|---|---|---|---|
+| Model substitution | **SUPPORTED** | SHA-256 over content, three digests (artifact / architecture / weights) | 15/15 correct against the fact asserted | | |
+| Re-serialisation vs substitution | **SUPPORTED** | graph digest + parameter digest disagreement pattern | deterministic | | |
+| Structural modification | **SUPPORTED** | weight-blind graph fingerprint, then per-layer diff | deterministic | | |
+| Parameter modification | **SUPPORTED** | per-tensor digest + relative L2, localised to named tensors | deterministic | | |
+| Behavioural deviation | **SUPPORTED** | prediction agreement · Jensen–Shannon · confidence shift · metamorphic consistency | | | |
+| Backdoor, declared patch family | PARTIAL | gradient-free family sweep; targeted-transition concentration | **1.000** | **0.833** | **0.000** |
+| Trigger reconstruction | PARTIAL | Neural Cleanse with the paper's dynamic λ schedule | ranking correct on 6/6; **index uninterpretable below 8 classes** | | |
+| Activation-based detection | PARTIAL (context) | spectral signatures + activation clustering | **measured non-discriminating — demoted** | | |
+| Sample-specific / semantic / adaptive backdoors | `NOT_SUPPORTED` | declared, tested, reported as a miss | | | |
+
+Backdoor score separation: non-backdoor models 0.000–0.333, detected backdoors
+0.667–0.833, threshold 0.50 — a genuinely empty region on both sides.
+
+**The one miss is the one the lab predicted.** `backdoor_blended_faint` is a
+blended trigger at opacity 0.08, deliberately built to sit *outside* the
+full-opacity family the probe sweeps; its ground truth says in advance that the
+probe is expected to miss it. It is a real, fully effective backdoor (true
+attack success rate 1.000) that this method does not test for. That is a
+coverage boundary being measured rather than asserted — which is worth more than
+a recall of 1.000 would have been.
+
+Full numbers, including the two methods that **did not work** and why, in
+[`docs/model-security.md`](docs/model-security.md).
 
 ¹ contributor-level, which is the claim this detector makes; sample-level
 attribution is a screening signal at R ≈ 0.75.
@@ -71,9 +116,28 @@ attribution is a screening signal at R ≈ 0.75.
 HIGH/CRITICAL, zero QUARANTINE.** An assurance tool that cries wolf is worse than
 no tool, so this is measured and asserted by tests.
 
-All metrics were measured on a synthetic corpus under published seeds — see
-`docs/attack-matrix.md` for the evaluation population, and
-`docs/limitations.md` for what that does and does not imply.
+All metrics were measured on synthetic corpora under published seeds — see
+`docs/attack-matrix.md` and `docs/model-security.md` §5 for the evaluation
+populations, and `docs/limitations.md` for what that does and does not imply.
+
+### Two methods that did not work, reported rather than hidden
+
+Spectral signatures and activation clustering, applied to a probe battery rather
+than the training set they were published for, produced a backdoored
+trigger-coincidence range of 0.00–1.15 against a *clean* range of 0.00–1.64 —
+the backdoored range sits **inside** the clean one, and the highest lift of any
+model in the lab belongs to a clean model. An earlier revision thresholded that
+statistic and fired backwards. It is now demoted to context-only, with the
+measurement published as its coverage reason.
+
+Neural Cleanse locates the right class on every backdoored model (smallest
+reconstructed mask, by 5–50×), but at six classes a *clean* model produced a
+mask as small (L1 6.8 at success 1.00, against the backdoored model's 5.9 at
+1.00). Its anomaly index is therefore declared uninterpretable below eight
+classes rather than reported as a verdict.
+
+This is ADR-013: a measurement that contradicts a design is more valuable than
+the design, and hiding it would make every other number here unbelievable.
 
 ## What a finding looks like
 
@@ -146,8 +210,21 @@ DATASET (untrusted)
    ├─ Detector[]              fixed order — a real dependency chain, see below
    ├─ ContributorAggregator   rate vs leave-one-out cohort, binomial + BH
    ├─ DispositionPolicy       published rule table → ACCEPT | REVIEW | QUARANTINE
-   ├─ CoverageStatement       every known attack class, including Modules 2–5
+   ├─ CoverageStatement       every known attack class, including Modules 3–5
    └─ AssuranceReport         JSON + console/Markdown + reproducibility context
+
+MODEL ARTIFACT (untrusted)
+   ├─ ModelAdapter            onnx | torchscript | torch — registry, not hard-coded
+   ├─ Capability set          inference · graph · parameters · activations · gradients
+   ├─ ModelManifest ────────► file_sha256   = ARTIFACT identity
+   │                          graph_digest  = ARCHITECTURE identity (weight-blind)
+   │                          parameter_digest = WEIGHT identity (container-blind)
+   ├─ ReferenceBattery        versioned + digested: clean · borderline · perturbation
+   │                          · OOD · declared trigger family
+   ├─ ModelDetector[]         identity → structure → parameters → behaviour
+   │                          → activation → trigger   (fixed dependency chain)
+   ├─ AssessmentMatrix        six levels, NEVER combined into one score (ADR-012)
+   └─ ModelAssuranceReport    the SAME Finding schema, policy and coverage statement
 ```
 
 The detectors are not five independent demos. `near_duplicate` publishes the
@@ -198,7 +275,17 @@ no artifact whose own provenance it would then have to assure. Installation
 needs a package index; nothing after that does. A CNN backend exists behind the
 same interface for deployments that vendor weights locally, records the weight
 file's SHA-256 in the report, and refuses with a clear message rather than
-fetching anything. See `docs/deployment.md`.
+fetching anything.
+
+Module 2 holds the same line. Its models are trained from seeds rather than
+downloaded, and NIST TrojAI / BackdoorBench artifacts are read **only** from a
+locally vendored directory — absent means `NOT_ASSESSED` with the reason
+`"required local artifact unavailable"`, never a fetch. The guarantee is tested
+two ways: dynamically, by amputating `socket` and running full dataset and model
+assessments through it; and statically, by asserting the shipped source contains
+no network imports, no URL literals, and no call to `torch.hub`,
+`from_pretrained` or `torchvision.models(weights=...)`. See
+`tests/security/test_offline.py` and `docs/deployment.md`.
 
 ## Reproducibility
 
@@ -224,29 +311,51 @@ cvtrust dataset verify baseline.json <root>        # post-baseline tamper check
 cvtrust lab generate   --out attack_lab/_clean --per-class 14
 cvtrust lab attack     <clean-root> <out> --scenario combined
 cvtrust lab evaluate   attack_lab --calibration-out reports/calibration.json
+
+cvtrust model manifest <model.onnx> --out model-baseline.json
+cvtrust model verify   model-baseline.json <model.onnx>   # post-assurance change
+cvtrust model assess   <model.onnx> --reference <trusted.onnx> [--black-box]
+                                    [--calibration F] [--out F] [--markdown-out F]
+cvtrust lab model-build    --out model_lab
+cvtrust lab model-evaluate model_lab
 cvtrust demo
 ```
 
-`dataset scan` exit codes compose: `0` clean · `1` review · `2` explained error ·
-`3` quarantine or verification failure.
+`model assess` takes `--black-box` to *genuinely* drop graph, parameter,
+activation and gradient access before analysis, so the white-box methods take
+their real unavailable path and the report says what black-box coverage actually
+is. It is not a simulation.
+
+`dataset scan` and `model assess` exit codes compose: `0` clean · `1` review ·
+`2` explained error · `3` quarantine or verification failure.
 
 ## Documentation
 
 | | |
 |---|---|
-| [`docs/architecture.md`](docs/architecture.md) | Data flow, interfaces, and all nine architecture decision records |
+| [`docs/architecture.md`](docs/architecture.md) | Data flow, interfaces, and all thirteen architecture decision records |
 | [`docs/threat-model.md`](docs/threat-model.md) | Trust boundary, adversary capabilities, per-threat residual risk, attacks on the detectors themselves |
-| [`docs/research.md`](docs/research.md) | Method cards with assumptions and access requirements, methods **rejected** with reasons, and the six bugs the evaluation harness caught |
+| [`docs/research.md`](docs/research.md) | Method cards with assumptions and access requirements, methods **rejected** with reasons, and the eleven defects the evaluation harnesses caught |
+| [`docs/model-security.md`](docs/model-security.md) | **Module 2.** Coverage matrix, access modes, measured results, the two methods that did not work, benchmark vendoring |
 | [`docs/coverage.md`](docs/coverage.md) | What is assessed, what is not, and what `SUPPORTED` does not mean |
 | [`docs/attack-matrix.md`](docs/attack-matrix.md) | Every scenario, every measured metric, with evaluation populations |
 | [`docs/limitations.md`](docs/limitations.md) | The complete list, per detector |
 | [`docs/security.md`](docs/security.md) | Cryptographic policy, input handling, conservative-by-default decisions |
 | [`docs/testing.md`](docs/testing.md) | Test layers, including the tests that assert a limitation is still true |
 | [`docs/deployment.md`](docs/deployment.md) | Air-gapped install, wheelhouse, everyday use |
-| [`docs/module-1-plan.md`](docs/module-1-plan.md) | The design this module was built to |
+| [`docs/module-1-plan.md`](docs/module-1-plan.md) | The design Module 1 was built to |
+| [`docs/module-2-plan.md`](docs/module-2-plan.md) | The design Module 2 was built to |
 
 ## Stack
 
 Python 3.11+ · NumPy · SciPy · scikit-learn · Pillow · Pydantic v2 · Typer ·
 Rich · `cryptography` (Ed25519, for Module 3 — the manifest format is
-signature-ready now) · pytest. No GPU, no services, no database.
+signature-ready now) · pytest.
+
+**Optional extras for Module 2:** `onnx` + `onnxruntime` (ONNX support) and
+`torch` (TorchScript, the gradient pathway, and the model attack lab's trainer).
+Both are genuinely optional: an absent runtime makes that format unavailable and
+the pipeline reports `NOT_ASSESSED` with a reason naming the missing package. It
+never becomes a crash and never becomes a silent pass.
+
+No GPU, no services, no database. Model assessment runs on CPU in ~120 ms.

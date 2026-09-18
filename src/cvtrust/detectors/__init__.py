@@ -47,9 +47,46 @@ EXECUTION_ORDER: tuple[str, ...] = (
     "systematic_mislabel",
 )
 
+
+# ---------------------------------------------------------------------------
+# Module 2 — model forensics.
+#
+# Registered in a separate registry from the dataset detectors, not the same
+# one: they consume a different context and are driven by a different pipeline,
+# and a single registry would let `cvtrust dataset scan --detectors` name a
+# model detector that cannot possibly run.  They share everything that matters —
+# the Finding schema, FindingFactory, the calibration set, the disposition
+# policy and the coverage statement.
+# ---------------------------------------------------------------------------
+from .model_activation import ModelActivationDetector
+from .model_base import (
+    MODEL_DETECTORS,
+    MODEL_EXECUTION_ORDER,
+    ModelAnalysisContext,
+    ModelDetector,
+    unavailable_output,
+    white_box_coverage,
+)
+from .model_behaviour import ModelBehaviourDetector
+from .model_identity import ModelIdentityDetector
+from .model_parameters import ModelParameterDetector
+from .model_structure import ModelStructureDetector
+from .model_trigger import ModelTriggerDetector
+
+MODEL_DETECTORS.add("model_identity", ModelIdentityDetector())
+MODEL_DETECTORS.add("model_structure", ModelStructureDetector())
+MODEL_DETECTORS.add("model_parameters", ModelParameterDetector())
+MODEL_DETECTORS.add("model_behaviour", ModelBehaviourDetector())
+MODEL_DETECTORS.add("model_activation", ModelActivationDetector())
+MODEL_DETECTORS.add("model_trigger", ModelTriggerDetector())
+
 __all__ = [
     "DETECTORS", "EXECUTION_ORDER", "AnalysisContext", "Detector", "DetectorOutput",
     "FindingFactory", "coverage_entry", "IntegrityDetector", "ExactDuplicateDetector",
     "NearDuplicateDetector", "LabelConsistencyDetector", "SystematicMislabelDetector",
     "OODDetector",
+    "MODEL_DETECTORS", "MODEL_EXECUTION_ORDER", "ModelAnalysisContext",
+    "ModelDetector", "unavailable_output", "white_box_coverage",
+    "ModelIdentityDetector", "ModelStructureDetector", "ModelParameterDetector",
+    "ModelBehaviourDetector", "ModelActivationDetector", "ModelTriggerDetector",
 ]

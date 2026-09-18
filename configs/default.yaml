@@ -108,3 +108,96 @@ contributor:
 # threshold-based detector reports HEURISTIC_UNCALIBRATED confidence, capped at
 # 0.60 by policy, and cannot recommend QUARANTINE.
 calibration_path: null
+
+# ---------------------------------------------------------------------------
+# Module 2 — model forensics and backdoor assurance.
+#
+# Every value here changes what a model finding MEANS, so every value is folded
+# into `config_hash` and printed in each model assurance report.
+# ---------------------------------------------------------------------------
+model:
+  detectors:
+    - model_identity
+    - model_structure
+    - model_parameters
+    - model_behaviour
+    - model_activation
+    - model_trigger
+
+  # Needed only for torch artifacts, which carry no input signature. When
+  # absent, a short list of conventional shapes is probed and the manifest
+  # records that the shape was PROBED rather than declared — a weaker fact, and
+  # labelled as one.
+  input_shape: null
+
+  # OFF by default. torch.load(weights_only=False) unpickles arbitrary Python,
+  # which EXECUTES CODE from an artifact this tool treats as untrusted. Prefer
+  # asking the supplier for ONNX or TorchScript. See docs/model-security.md.
+  allow_unsafe_deserialisation: false
+
+  # Locally vendored NIST TrojAI / BackdoorBench directory. Absent means
+  # benchmark evaluation is NOT_ASSESSED with the reason "required local
+  # artifact unavailable". Benchmark artifacts are NEVER downloaded.
+  benchmark_dir: null
+
+  # The probe battery: the scope of every behavioural claim. Its digest appears
+  # in every behavioural finding so the claim can be recomputed.
+  battery:
+    clean_per_class: 4
+    # Interpolations between class prototypes. Two models that differ at all
+    # differ most visibly at the decision boundary.
+    borderline_pairs: 6
+    # Out-of-distribution probes, present to guard the INVERSE error: OOD
+    # behaviour is never treated as evidence of a backdoor.
+    ood_count: 8
+    trigger_bases: 6
+    # Fixed, not adaptive: on some runtimes the reduction order inside a batched
+    # matmul depends on the batch dimension, so a variable batch size would make
+    # an argmax at a decision boundary depend on how the battery was chunked.
+    batch_size: 32
+
+  behaviour:
+    # Two artifacts of the SAME model agree on 100% of probes (measured: 1.000
+    # for both re-serialisation and cross-format export), so this sits just
+    # below 1.0 to absorb a boundary probe flipping on last-bit float
+    # differences between runtimes.
+    agreement_floor: 0.98
+    # Reference-free, which is what keeps the black-box pathway able to say
+    # something on its own.
+    consistency_floor: 0.70
+
+  parameters:
+    # NOT the conventional 3.5. This screening tests four statistics per peer
+    # group on groups often smaller than ten tensors, and at 3.5 roughly a third
+    # of CLEAN models carry a finding. Measured against the null: 3.5 -> ~0.35
+    # false-alarm rate, 8.0 -> <=0.03. See cvtrust.models.params.DEFAULT_PEER_Z.
+    peer_z_threshold: 8.0
+
+  activation:
+    # Absent means the last tap the adapter offers, which is the penultimate
+    # representation — the layer both source methods operate on.
+    layer: null
+    spectral_epsilon: 0.15
+    # Below this, a top singular vector and a 2-means split are both fitting
+    # noise, and the class is reported as skipped rather than scored.
+    min_class_support: 12
+
+  trigger:
+    # Neural Cleanse. Requires INPUT GRADIENTS, so it runs on PyTorch and
+    # TorchScript and is reported NOT_ASSESSED on ONNX — which is a fact about
+    # the format, not a failure.
+    enable_reconstruction: true
+    # Gradient-free sweep of the declared patch family. Works under BLACK_BOX
+    # access. Explicitly NOT reconstruction, and never reported as such.
+    enable_family_probe: true
+    steps: 200
+    learning_rate: 0.1
+    # The L1 penalty ceiling. This term is what makes Neural Cleanse work, and
+    # it is also what makes it blind to a trigger that is large by design.
+    mask_penalty: 0.03
+    # Conjunction with the anomaly index. This is what suppresses Neural
+    # Cleanse's documented false positives on clean models whose classes sit
+    # close together in input space.
+    success_threshold: 0.90
+    # Values below 1.0 probe the blended-trigger family (Chen et al. 2017).
+    probe_opacities: [1.0]

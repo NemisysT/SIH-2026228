@@ -15,3 +15,10 @@ pyyaml>=6
 # Development / test
 pytest>=8
 pytest-cov>=5
+
+# Module 2 model runtimes. OPTIONAL: without them the corresponding model
+# formats are unavailable and the pipeline reports NOT_ASSESSED with a reason,
+# rather than failing or silently passing. Nothing here is fetched at run time.
+onnx>=1.16
+onnxruntime>=1.18
+torch>=2.2

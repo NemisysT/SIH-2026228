@@ -26,9 +26,26 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-cov>=5"]
-# Optional CNN feature backend. Weights are never downloaded; they must be
-# vendored into the deployment and referenced by path.
+
+# Module 2 model runtimes. BOTH ARE OPTIONAL: an absent runtime makes the
+# corresponding model format unavailable, which the pipeline reports as
+# NOT_ASSESSED with a reason naming the missing package. It never becomes a
+# crash, and it never becomes a silent pass.
+#
+# Installing these needs a package index; RUNTIME still touches no network.
+# For an air-gapped deployment, vendor the wheels and install from a local
+# directory (see docs/deployment.md).
+onnx = ["onnx>=1.16", "onnxruntime>=1.18"]
+
+# PyTorch serves two purposes: the optional CNN feature backend (Module 1) and
+# the gradient-bearing model pathway (Module 2), which is what makes Neural
+# Cleanse trigger reconstruction possible at all. Pretrained weights are never
+# downloaded; they must be vendored and referenced by path.
 torch = ["torch>=2.2", "torchvision>=0.17"]
+
+# Everything needed to exercise Module 2 end to end, including the model
+# attack lab, which trains its own small networks from seeds.
+models = ["onnx>=1.16", "onnxruntime>=1.18", "torch>=2.2"]
 
 [project.scripts]
 cvtrust = "cvtrust.cli.main:main"
@@ -40,6 +57,6 @@ where = ["src"]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
 markers = [
-    "slow: tests that generate a full corpus and run the whole pipeline",
+    "slow: tests that generate a full corpus or train models and run a whole pipeline",
     "adversarial: tests that attempt to evade a detector",
 ]

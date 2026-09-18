@@ -2,9 +2,11 @@
 .venv/
 venv/
 
-# Generated artifacts. Both are reproducible from published seeds
-# (scripts/evaluate.sh), so they are not version-controlled.
+# Generated artifacts. All are reproducible from published seeds
+# (scripts/evaluate.sh, scripts/model-evaluate.sh), so they are not
+# version-controlled. model_lab/ additionally contains trained model weights.
 attack_lab/
+model_lab/
 reports/
 datasets/*
 !datasets/.gitkeep

@@ -135,3 +135,112 @@ operational imagery. These are evidence that the detectors behave as designed
 and a defensible lower bound on evidence quality. They are not a prediction of
 operational performance, and recalibration against representative data is a
 deployment step. This caveat is printed by the tool itself, not only here.
+
+
+---
+
+## Module 2 — the model attack lab
+
+15 scenarios, one shared trusted reference model. Every artifact is a pure
+function of `(reference corpus, seed, parameters)`, so re-running the lab
+reproduces it byte for byte — asserted by
+`test_the_model_lab_is_reproducible`.
+
+```
+model_lab/
+  _reference/  reference.pt · reference.onnx · training_spec.json
+  <scenario>/
+    model.onnx · model.pt     <- the only thing a detector sees
+    ground_truth.json         <- what was actually done
+    attack_config.json        <- seed + parameters, sufficient to regenerate
+```
+
+Ground truth lives outside the artifact, exactly as in Module 1, so no detector
+can read the answer key.
+
+### The matrix
+
+The design principle is from the Module 2 brief §27: **a lab containing only
+attacks our detectors are good at measures nothing.** So it deliberately
+contains clean models that look suspicious, and backdoors outside the family the
+probe sweeps.
+
+| Scenario | Ground truth | Purpose |
+|---|---|---|
+| `clean_retrain_0/1/2` | clean | The false-positive floor, and the hardest clean case: weights differ from the reference *everywhere*, for entirely benign reasons. |
+| `clean_unusual_init` | clean | Weight statistics unusual by construction (init scaled 2.6×). A clean model with odd arithmetic must not become a finding. |
+| `clean_finetuned` | clean | The realistic shape of a *legitimate* weight change: every tensor moves a little. Should read as `distributed`, not `localised`. |
+| `reserialised` | substitution | Identical weights, different bytes. The case a single "model changed" flag could not express. |
+| `substitution_architecture` | substitution | A different architecture entirely — while still declaring the reference's architecture name in its metadata, to prove the name plays no part. |
+| `parameter_tamper_small/large` | tampering | Targeted post-training edit to one tensor. Should read as `localised` and name the tensor. |
+| `backdoor_badnets` | backdoor | BadNets patch, bottom-right, 20% side, 10% poison, target class 2. |
+| `backdoor_small_patch` | backdoor | Smaller patch (12%), different corner, different target. |
+| `backdoor_low_rate` | backdoor | 3% poison rate — the weak-attack case. |
+| `backdoor_high_rate` | backdoor | 25% poison rate, centre position. |
+| `backdoor_blended` | backdoor | Chen et al. blended trigger at opacity 0.12 — **outside** the full-opacity probe family. |
+| `backdoor_blended_faint` | backdoor | Opacity 0.08 — further outside still. |
+
+Backdoors are installed by **data poisoning and training**, not by editing
+weights afterwards, so the backdoor is distributed through the network the way a
+real one is and the detectors face the problem they claim to address.
+
+### Measured outcomes
+
+| Level | P | R | F1 | FPR | AUROC |
+|---|---|---|---|---|---|
+| `model_backdoor` (trigger) | **1.000** | **0.833** | **0.909** | **0.000** | **0.981** |
+| `model_substitution` (identity, against the fact asserted) | 15/15 correct | | | | |
+
+Score separation for the backdoor level:
+
+| Group | Attack success rate |
+|---|---|
+| 5 detected backdoors | 0.667 – 0.833 |
+| — threshold — | **0.500** |
+| 9 non-backdoor models | 0.000 – 0.333 |
+| 1 **missed** backdoor (`backdoor_blended_faint`) | 0.292 |
+
+The threshold sits in a genuinely empty region on both sides. The miss is the
+one the lab predicted: `backdoor_blended_faint` is a blended trigger at opacity
+0.08, built to sit **outside** the full-opacity family the probe sweeps, and its
+`ground_truth.json` records `trigger_in_declared_probe_family: false` with the
+note that the probe is expected to miss it. Its true attack success rate against
+its own trigger is 1.000 — the backdoor is real and effective; the probe simply
+does not test for that family.
+
+Under black-box access the backdoor and identity results are **unchanged**
+(hashing bytes and probing a trigger family need no internal access), while
+`model_tampering` correctly drops to nothing flagged, because parameter analysis
+reports `REQUIRES_WHITE_BOX`.
+
+### Why identity's attack-labelled precision is 0.133 and why it is meaningless
+
+Every lab artifact differs from the reference, including the clean retrains,
+because a model retrained from a different seed is a different file. The
+identity detector reports MISMATCH on all of them and **every one of those
+reports is true**. Scored against "was this an attack?", the clean retrains
+become false positives and precision collapses — but nothing was wrong except
+the question. The evaluation output publishes three scorings side by side
+(`detector-attributed`, `level-outcome`, `deterministic-verification`) with this
+caveat attached, rather than quietly printing whichever is most flattering.
+
+### Reproducing
+
+```bash
+cvtrust lab model-build --out model_lab          # ~40 s, 16 models
+cvtrust lab model-evaluate model_lab             # ~2 s
+cvtrust lab model-evaluate model_lab --black-box # the black-box pathway
+cvtrust lab model-evaluate model_lab --artifact model.pt   # the gradient pathway
+```
+
+### Performance
+
+| Measurement | Value |
+|---|---|
+| Full ONNX assessment, white-box (94-probe battery) | 121 ms mean, 220 ms max |
+| Full assessment, black-box | 89 ms mean, 116 ms max |
+| Full TorchScript assessment (includes Neural Cleanse) | 4.5 s mean, 6.2 s max |
+| Building the whole lab (16 models) | ~90 s |
+| Peak RSS | ~437 MB |
+
+Single CPU core, no GPU.
