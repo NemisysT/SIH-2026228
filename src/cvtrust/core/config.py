@@ -119,7 +119,11 @@ class SystematicMislabelConfig(_Base):
 class OODConfig(_Base):
     """Out-of-distribution scoring against a declared reference set."""
 
-    methods: tuple[Literal["mahalanobis", "knn"], ...] = ("mahalanobis", "knn")
+    methods: tuple[Literal["mahalanobis", "knn", "residual"], ...] = (
+        "mahalanobis",
+        "knn",
+        "residual",
+    )
     knn_k: int = Field(default=5, ge=1, le=50)
     target_fpr: float = Field(
         default=0.01,
@@ -187,13 +191,18 @@ class Config(_Base):
     """Top-level configuration."""
 
     seed: int = Field(default=20260917, ge=0)
+    #: Which detectors to run.  This is a *set* of names, not an order: the
+    #: execution order is fixed in ``detectors.EXECUTION_ORDER`` because later
+    #: detectors consume artifacts published by earlier ones.  Listed here in
+    #: execution order anyway, so the configuration does not imply an order the
+    #: pipeline ignores.
     detectors: tuple[str, ...] = (
         "integrity",
         "exact_duplicate",
         "near_duplicate",
+        "ood",
         "label_consistency",
         "systematic_mislabel",
-        "ood",
     )
     features: FeatureConfig = FeatureConfig()
     phash: PerceptualHashConfig = PerceptualHashConfig()

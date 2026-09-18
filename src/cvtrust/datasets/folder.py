@@ -29,8 +29,12 @@ class FolderAdapter:
     def detect(root: Path) -> bool:
         if not root.is_dir():
             return False
-        # Reject anything that another adapter owns outright.
-        if (root / "annotations").is_dir() or any(root.glob("*.json")):
+        # Reject anything that another adapter owns outright. contributors.json
+        # is provenance metadata that any layout may carry, so it does not
+        # count as an annotation document here.
+        if (root / "annotations").is_dir():
+            return False
+        if any(p.name != "contributors.json" for p in root.glob("*.json")):
             return False
         if (root / "labels").is_dir() and (root / "images").is_dir():
             return False

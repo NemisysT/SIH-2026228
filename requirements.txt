@@ -1,0 +1,17 @@
+# Runtime dependencies. Install into a virtual environment:
+#   python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
+#
+# Installation needs a package index; RUNTIME does not touch the network.
+numpy>=2.0,<3
+scipy>=1.13
+scikit-learn>=1.5
+pillow>=10.3
+pydantic>=2.7
+typer>=0.12
+rich>=13.7
+cryptography>=42
+pyyaml>=6
+
+# Development / test
+pytest>=8
+pytest-cov>=5

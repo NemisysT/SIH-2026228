@@ -1,0 +1,27 @@
+# Virtual environments
+.venv/
+venv/
+
+# Generated artifacts. Both are reproducible from published seeds
+# (scripts/evaluate.sh), so they are not version-controlled.
+attack_lab/
+reports/
+datasets/*
+!datasets/.gitkeep
+models/*
+!models/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# OS
+.DS_Store

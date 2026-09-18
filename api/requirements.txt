@@ -1,0 +1,7 @@
+# Web demo API layer only. Kept separate from requirements.txt on purpose:
+# the assurance pipeline itself (cvtrust) stays air-gapped: see
+# pyproject.toml. This process just puts an HTTP face on it for the judge
+# facing dashboard in web/, and needs network only to be reachable by the
+# browser on localhost.
+fastapi>=0.115
+uvicorn[standard]>=0.30

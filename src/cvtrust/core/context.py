@@ -22,16 +22,29 @@ from .canonical import digest_safe
 from .evidence import SCHEMA_VERSION, utc_now_iso
 from .hashing import sha256_canonical, short
 
-#: Report fields that legitimately differ between two identical runs.  The
-#: determinism test strips exactly these and requires byte equality of the rest.
+#: Report fields that legitimately differ between two identical runs: wall-clock
+#: times and durations.  The determinism test strips exactly these and requires
+#: byte equality of everything else.
 VOLATILE_FIELDS: tuple[str, ...] = (
     "observed_at",
     "started_at",
     "finished_at",
+    "generated_at",
     "duration_ms",
     "timings_ms",
     "throughput_samples_per_s",
 )
+
+#: Fields that describe *where* an assessment ran rather than *what* was
+#: assessed.  They stay in the report, because an operator needs to know which
+#: directory was scanned, but they are excluded from the report's stable digest:
+#: a dataset's identity is its content digest, not its path.  Two reviewers who
+#: unpack the same corpus into different directories must be able to compare
+#: report digests and find them equal.
+LOCATION_FIELDS: tuple[str, ...] = ("root",)
+
+#: Everything excluded from the report's stable digest.
+DIGEST_EXCLUDED_FIELDS: tuple[str, ...] = VOLATILE_FIELDS + LOCATION_FIELDS
 
 
 class RunContext(BaseModel):

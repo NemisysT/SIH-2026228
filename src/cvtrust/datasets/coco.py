@@ -9,6 +9,7 @@ malformed annotation records are themselves a supported threat
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -24,18 +25,41 @@ from .base import (
 )
 
 
-def _find_annotation_file(root: Path) -> Path | None:
-    candidates = sorted(root.glob("annotations/*.json")) + sorted(root.glob("*.json"))
-    for candidate in candidates:
+@lru_cache(maxsize=16)
+def _parse_json(path_str: str, _mtime_ns: int, _size: int) -> Any:
+    """Parse a candidate annotation document, cached on (path, mtime, size).
+
+    Format detection deliberately *parses* rather than sniffing for a substring
+    in the first few kilobytes.  A COCO file with sorted keys and many
+    annotations can push ``"images"`` hundreds of kilobytes into the document,
+    and a sniffing detector then silently declares the dataset unrecognisable --
+    a detection failure that looks exactly like an unsupported format.  The
+    cache key includes mtime and size so a file edited between detection and
+    load is re-read rather than served stale.
+    """
+    try:
+        return json.loads(Path(path_str).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+
+
+def _candidate_files(root: Path) -> list[Path]:
+    return [
+        candidate
+        for candidate in sorted(root.glob("annotations/*.json")) + sorted(root.glob("*.json"))
         # contributors.json is provenance metadata, not annotations.
-        if candidate.name == "contributors.json":
-            continue
+        if candidate.name != "contributors.json"
+    ]
+
+
+def _find_annotation_file(root: Path) -> Path | None:
+    for candidate in _candidate_files(root):
         try:
-            with open(candidate, "rb") as handle:
-                head = handle.read(4096).decode("utf-8", "ignore")
+            stat = candidate.stat()
         except OSError:
             continue
-        if '"images"' in head and '"annotations"' in head:
+        document = _parse_json(str(candidate), stat.st_mtime_ns, stat.st_size)
+        if isinstance(document, dict) and "images" in document and "annotations" in document:
             return candidate
     return None
 
@@ -52,10 +76,8 @@ class CocoAdapter:
         ann_path = _find_annotation_file(root)
         if ann_path is None:
             raise AdapterError(f"no COCO annotation JSON found under {root}")
-        try:
-            doc: Any = json.loads(ann_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise AdapterError(f"cannot parse COCO annotations {ann_path}: {exc}") from exc
+        stat = ann_path.stat()
+        doc: Any = _parse_json(str(ann_path), stat.st_mtime_ns, stat.st_size)
         if not isinstance(doc, dict):
             raise AdapterError(f"COCO annotation root must be an object: {ann_path}")
 

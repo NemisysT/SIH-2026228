@@ -1,0 +1,110 @@
+# cvtrust default configuration.
+#
+# Every tunable that affects a finding lives here, is folded into `config_hash`,
+# and is serialised into every report. A threshold hard-coded in a detector is a
+# threshold an analyst cannot audit, so there are none.
+#
+# Unknown keys are REJECTED rather than ignored: a silently-ignored threshold is
+# one the analyst believes is active.
+#
+# These values are the defaults; the file is provided as a starting point for a
+# site configuration (`cp configs/default.yaml configs/site.yaml`).
+
+# Single seed for the whole run. Every component derives its own named stream
+# from it, so adding a component cannot perturb an existing one's draws.
+seed: 20260917
+
+detectors:
+  - integrity
+  - exact_duplicate
+  - near_duplicate
+  - ood
+  - label_consistency
+  - systematic_mislabel
+
+features:
+  # `classical` needs no pretrained weights and no network (ADR-005).
+  # `torch_cnn` requires a locally vendored weight file and is never downloaded.
+  extractor: classical
+  thumbnail: 32
+  hsv_bins: [8, 4, 4]
+  gradient_bins: 16
+  dct_band: 8
+  # Bounding the longest side removes resolution as a confound: otherwise a
+  # contributor submitting higher-resolution imagery looks out-of-distribution
+  # purely because of pixel count.
+  max_side: 512
+
+phash:
+  hash_size: 8          # 64-bit hashes; packing assumes exactly 64 bits
+  dct_size: 32
+
+near_duplicate:
+  # 8/64 is the conventional operating point in the perceptual-hash literature.
+  phash_hamming_max: 8
+  # Stage-2 confirmation in the feature space, which suppresses the pHash
+  # collisions that low-detail imagery produces.
+  confirm_cosine_min: 0.90
+  # Cluster size at which a group is treated as flooding rather than incidental
+  # redundancy.
+  flood_cluster_size: 5
+  # Above this, exact all-pairs comparison is REFUSED and coverage becomes
+  # NOT_ASSESSED. It is never silently approximated.
+  max_pairwise_samples: 50000
+
+label_consistency:
+  k: 10
+  disagreement_min: 0.70
+  # Classes with less support than this are excluded: neighbourhood label
+  # agreement is meaningless without neighbours.
+  min_class_support: 8
+  # Adversarial hardening. With this off, an attacker flips one label then
+  # floods near-copies carrying the same wrong label, and the neighbourhood
+  # agrees with itself.
+  exclude_near_duplicates: true
+
+systematic_mislabel:
+  alpha: 0.01
+  min_pair_count: 4
+  min_contributor_samples: 10
+
+ood:
+  # `residual` is not optional window dressing: PCA discards the directions in
+  # which the reference set has no variance, and a different sensor differs
+  # precisely there. Removing it took measured recall from 1.00 to 0.00 while
+  # leaving AUROC near 0.75 (docs/research.md).
+  methods: [mahalanobis, knn, residual]
+  knn_k: 5
+  # FAMILY-WISE false-alarm rate on reference-distribution samples. The
+  # per-method rate is Bonferroni-corrected by the number of methods, because a
+  # sample is flagged if any method exceeds its threshold.
+  target_fpr: 0.01
+  # Below this the covariance estimate is untrustworthy and the detector
+  # reports NOT_ASSESSED rather than guessing.
+  min_reference_samples: 30
+  pca_components: 48
+
+aggregation:
+  alpha: 0.05
+  min_contributor_samples: 8
+  min_flagged: 2
+
+disposition:
+  quarantine_min_severity: HIGH
+  quarantine_min_confidence: 0.85
+  review_min_severity: LOW
+  review_min_confidence: 0.30
+
+contributor:
+  # Precedence: sidecar > adapter-native field > path pattern > unknown.
+  sidecar: contributors.json
+  # Opt-in and off by default: a filename is never an identity. Enable only
+  # when the directory layout is genuinely authoritative, e.g.
+  #   path_pattern: '^(?P<contributor>[^/]+)/'
+  path_pattern: null
+  unknown_label: unknown
+
+# Path to a table produced by `cvtrust lab evaluate`. Absent means every
+# threshold-based detector reports HEURISTIC_UNCALIBRATED confidence, capped at
+# 0.60 by policy, and cannot recommend QUARANTINE.
+calibration_path: null
