@@ -373,6 +373,47 @@ evidence**. `label_consistency` publishes the suggestions that
 `systematic_mislabel` tests for directional structure. That is why the order is
 fixed in code and not configurable.
 
+## The analyst platform
+
+Modules 1 to 4 are the engine. Module 5 is the application an analyst uses, and
+it computes nothing — every verdict, number and sentence it displays was
+produced by the engine and written to a JSON report.
+
+```bash
+cvtrust analyst export --out reports/analyst   # run the real pipelines, write the feed
+cd web && npm install && npm run dev           # http://localhost:3000
+```
+
+Ten screens: the assurance dashboard, dataset, model, provenance, audit trail,
+distribution shift, the evidence explorer, the decision, coverage, and the demo
+scenario matrix. The evidence explorer is the one that matters most — it walks
+a disposition back through the rule that produced it, the evidence that rule
+rested on, the detector that observed it, and the detector's own raw
+measurement, without summarising anything away on the journey.
+
+**Demo and live data are never blended.** The demo source is real Module 1–4
+output over the attack lab's nineteen scenarios; the live source is a directory
+an operator fills with output from a real assessment. Which one is on screen is
+stated in words on every page, and asking for live data never silently returns
+demo data.
+
+**There is still no score.** The UI introduces no trust score, no security
+score and no gauge, because the architecture has none. Three separate checks
+fail the build if one appears — in the exported reports, in the frontend's own
+projections, and in every rendered page.
+
+The frontend is built offline: fonts self-hosted, assets local, no analytics,
+no external API, and no runtime dependency on any hosted origin.
+
+```bash
+./scripts/module5-verify.sh          # the end-to-end gate: engine → feed → UI
+```
+
+That script exports the feed from the real pipelines, runs the backend boundary
+tests and the frontend projection tests, builds the application, serves it, then
+fetches all ten screens for all nineteen scenarios and asserts that what each
+page says matches what the engine's JSON says. 190 page renders, checked.
+
 ## On blockchain — the honest answer
 
 The problem statement's theme is Blockchain & Cybersecurity, and the
@@ -471,6 +512,8 @@ cvtrust lab generate   --out attack_lab/_clean --per-class 14
 cvtrust lab attack     <clean-root> <out> --scenario combined
 cvtrust lab evaluate   attack_lab --calibration-out reports/calibration.json
 
+cvtrust analyst export --out reports/analyst        # Module 5: build the analyst feed
+
 cvtrust model manifest <model.onnx> --out model-baseline.json
 cvtrust model verify   model-baseline.json <model.onnx>   # post-assurance change
 cvtrust model assess   <model.onnx> --reference <trusted.onnx> [--black-box]
@@ -557,6 +600,7 @@ exit codes compose: `0` clean/accept · `1` review · `2` explained error or
 | [`docs/module-2-plan.md`](docs/module-2-plan.md) | The design Module 2 was built to |
 | [`docs/module-3-plan.md`](docs/module-3-plan.md) | The design Module 3 was built to, and the nine defects the provenance lab caught |
 | [`docs/module-4-plan.md`](docs/module-4-plan.md) | **Module 4.** The design it was built to, the five shift methods and why those five, the fusion model, and the nine defects the assurance lab caught |
+| [`docs/module-5-plan.md`](docs/module-5-plan.md) | **Module 5.** The analyst platform: the report boundary it consumes, the live/demo separation, the semantics the UI must preserve, and why there is still no score |
 
 ## Stack
 

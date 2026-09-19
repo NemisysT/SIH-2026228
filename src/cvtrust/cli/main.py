@@ -56,11 +56,17 @@ assurance_app = typer.Typer(
     no_args_is_help=True,
 )
 lab_app = typer.Typer(help="Synthetic attack laboratory and evaluation.", no_args_is_help=True)
+analyst_app = typer.Typer(
+    help="The analyst platform data feed (Module 5). Exports real Module 1-4 "
+    "reports for the frontend; computes nothing of its own.",
+    no_args_is_help=True,
+)
 app.add_typer(dataset_app, name="dataset")
 app.add_typer(model_app, name="model")
 app.add_typer(provenance_app, name="provenance")
 app.add_typer(assurance_app, name="assurance")
 app.add_typer(lab_app, name="lab")
+app.add_typer(analyst_app, name="analyst")
 
 
 def _load_config(path: Optional[Path], overrides: dict | None = None) -> Config:
@@ -1414,6 +1420,76 @@ def lab_evaluate(
         calibration_out.parent.mkdir(parents=True, exist_ok=True)
         calibration_out.write_text(calibration.model_dump_json(indent=2), encoding="utf-8")
         typer.secho(f"calibration written to {calibration_out}", fg=typer.colors.BLUE)
+
+
+@analyst_app.command("export")
+def analyst_export(
+    out: Path = typer.Option(
+        Path("reports/analyst"), "--out", "-o",
+        help="Where to write the analyst feed the frontend reads.",
+    ),
+    assurance_lab: Path = typer.Option(
+        Path("assurance_lab"), "--assurance-lab", help="Built Module 4 population lab."
+    ),
+    dataset_lab: Optional[Path] = typer.Option(
+        Path("attack_lab"), "--dataset-lab", help="Built Module 1 attack lab."
+    ),
+    model_lab: Optional[Path] = typer.Option(
+        Path("model_lab"), "--model-lab", help="Built Module 2 model lab."
+    ),
+    provenance_lab: Optional[Path] = typer.Option(
+        Path("provenance_lab"), "--provenance-lab", help="Built Module 3 provenance lab."
+    ),
+    config: Optional[Path] = typer.Option(None, "--config", "-c"),
+    workdir: Optional[Path] = typer.Option(
+        None, "--workdir",
+        help="Where the upstream module reports are built. Defaults to "
+             "<assurance-lab>/_scenarios.",
+    ),
+) -> None:
+    """Run every demo scenario for real and write the frontend's JSON feed.
+
+    This is the Module 5 boundary: it executes the same Module 1-4 code the
+    evaluation executes and serialises the result. It introduces no detector,
+    no score and no interpretation of its own. A scenario whose upstream lab is
+    missing is exported as NOT_RUN with the reason rather than omitted.
+    """
+    from ..reporting.analyst_export import export_scenarios, load_assurance_lab
+
+    try:
+        cfg = _load_config(config)
+        lab = load_assurance_lab(assurance_lab)
+        catalogue = export_scenarios(
+            out, cfg,
+            assurance_lab=lab,
+            dataset_lab_root=dataset_lab,
+            model_lab_root=model_lab,
+            provenance_lab_root=provenance_lab,
+            work_dir=workdir,
+        )
+    except CvTrustError as exc:
+        _fail(exc)
+        return
+
+    rows = catalogue["scenarios"]
+    run = [row for row in rows if row["status"] == "RUN"]
+    typer.echo()
+    for row in rows:
+        if row["status"] != "RUN":
+            typer.secho(f"  {row['name']:34s} NOT_RUN", fg=typer.colors.YELLOW)
+            typer.secho(f"      {row['reason']}", fg=typer.colors.YELLOW)
+            continue
+        agree = row["observed_disposition"] == row["expected_disposition"]
+        typer.secho(
+            f"  {row['name']:34s} {row['observed_disposition']:13s}"
+            + ("" if agree else f"  (lab expectation: {row['expected_disposition']})"),
+            fg=typer.colors.GREEN if agree else typer.colors.RED,
+        )
+    typer.echo()
+    typer.secho(
+        f"{len(run)}/{len(rows)} scenario(s) exported to {out}", fg=typer.colors.BLUE
+    )
+    raise typer.Exit(code=0 if len(run) == len(rows) else 1)
 
 
 @app.command("demo")

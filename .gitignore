@@ -39,3 +39,12 @@ htmlcov/
 
 # OS
 .DS_Store
+
+# Module 5: the analyst feed is regenerated from the engine by
+# `cvtrust analyst export`, and reports/live is filled by an operator.
+reports/analyst/
+reports/live/
+web/.next/
+# Carried across the air gap with the repository rather than committed;
+# see docs/deployment.md § Module 5.
+web/node_modules/

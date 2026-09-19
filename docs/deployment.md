@@ -460,3 +460,97 @@ analysis time. There is no table to load and nothing to download — but that al
 means `alpha` is a chosen strictness, not a measured operational error rate. No
 shift threshold in this build is calibrated against operational data, and the
 report says so.
+
+## Module 5 — the analyst platform in an air-gapped deployment
+
+The frontend has no network dependency at build time or at run time. Fonts are
+self-hosted, every image and video is a local file, there is no analytics
+package, and the data layer reads the filesystem rather than calling a service.
+`pytest tests/security/test_module5_offline.py` fails the build if any of that
+changes.
+
+One thing does have to be carried across the air gap: the Node dependencies.
+`npm install` needs a registry, and the target environment has none. Transport
+`web/node_modules/` with the repository, the same way the Python wheelhouse is
+transported. It is about 550 MB.
+
+```bash
+# On a connected machine, if node_modules is not already present:
+cd web && npm ci
+
+# Then carry the whole repository, web/node_modules included, across.
+```
+
+### Building the feed
+
+The application reads reports from disk. Build them from the engine:
+
+```bash
+cvtrust analyst export --out reports/analyst
+```
+
+This runs the real Module 1–4 pipelines over the attack lab — nothing is
+fabricated — and writes one directory per scenario plus a catalogue. It takes
+about thirty seconds and needs the four labs to have been built first
+(`cvtrust lab generate`, `lab model-build`, `lab provenance-build`,
+`lab assurance-build`). A scenario whose lab is missing is exported as
+`NOT_RUN` with the reason rather than omitted.
+
+### Running it
+
+```bash
+cd web
+npm run build
+npm start          # http://localhost:3000
+```
+
+Or `npm run dev` for development. Both are local servers; neither reaches out.
+
+### Publishing a live assessment
+
+The platform keeps demo and live data strictly apart, and live data is whatever
+an operator publishes to `reports/live/`. To put a real assessment on the live
+source:
+
+```bash
+mkdir -p reports/live/scenarios/2026-02-11-batch-07
+cvtrust assurance assess \
+  --dataset-report    reports/live/scenarios/2026-02-11-batch-07/dataset.json \
+  --model-report      reports/live/scenarios/2026-02-11-batch-07/model.json \
+  --provenance-report reports/live/scenarios/2026-02-11-batch-07/provenance.json \
+  --shift             reports/live/scenarios/2026-02-11-batch-07/shift.json \
+  --out               reports/live/scenarios/2026-02-11-batch-07/assurance.json
+```
+
+then write `reports/live/index.json` naming it:
+
+```json
+{
+  "schema_version": "1.0",
+  "kind": "LIVE",
+  "generated_at": "2026-02-11T09:14:00Z",
+  "software_version": "0.1.0",
+  "scenarios": [
+    {
+      "name": "2026-02-11-batch-07",
+      "status": "RUN",
+      "expected_disposition": "",
+      "observed_disposition": "REVIEW",
+      "note": "Batch 07, sensor B, night collection declared.",
+      "files": {
+        "assurance": "scenarios/2026-02-11-batch-07/assurance.json",
+        "dataset": "scenarios/2026-02-11-batch-07/dataset.json",
+        "model": "scenarios/2026-02-11-batch-07/model.json",
+        "provenance": "scenarios/2026-02-11-batch-07/provenance.json",
+        "shift": "scenarios/2026-02-11-batch-07/shift.json"
+      }
+    }
+  ]
+}
+```
+
+Open `http://localhost:3000/?source=live`. Every screen states which source it
+is showing, and asking for live data never returns demo data — an empty live
+directory produces the live empty state, with this command in it.
+
+Both directories are configurable: `CVTRUST_DEMO_DIR` and `CVTRUST_LIVE_DIR`.
