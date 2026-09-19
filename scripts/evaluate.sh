@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-CVTRUST=./.venv/bin/cvtrust
+CVTRUST="${CVTRUST:-./.venv/bin/cvtrust}"
 PER_CLASS="${PER_CLASS:-14}"
 LAB="${LAB:-attack_lab}"
 

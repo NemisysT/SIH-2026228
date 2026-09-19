@@ -12,7 +12,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-CVTRUST=./.venv/bin/cvtrust
+CVTRUST="${CVTRUST:-./.venv/bin/cvtrust}"
 LAB="${PROVENANCE_LAB:-provenance_lab}"
 RECORDS="${RECORDS:-6}"
 

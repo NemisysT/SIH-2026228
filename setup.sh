@@ -34,6 +34,28 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 ROOT="$(pwd)"
 
+# ------------------------------------------------- virtualenv layout ------
+#
+# `python -m venv` lays its interpreter and console-script shims out
+# differently per platform: bin/ with no suffix on Linux and macOS,
+# Scripts/ with a .exe suffix on native Windows. Git Bash on Windows still
+# runs a native Windows Python, so it gets the Scripts/ layout too — MSYS,
+# MINGW and Cygwin all report a matching uname. Every venv path used below
+# is built from these variables so there is exactly one place that knows
+# about the difference.
+case "$(uname -s 2>/dev/null || echo unknown)" in
+    MINGW*|MSYS*|CYGWIN*) VENV_SUBDIR="Scripts"; EXE=".exe" ;;
+    *)                    VENV_SUBDIR="bin";     EXE=""     ;;
+esac
+VENV_PY="$ROOT/.venv/$VENV_SUBDIR/python$EXE"
+CVTRUST="$ROOT/.venv/$VENV_SUBDIR/cvtrust$EXE"
+PYTEST="$ROOT/.venv/$VENV_SUBDIR/pytest$EXE"
+# Relative forms for messages printed to the user — shorter, and what they
+# would type themselves.
+VENV_PY_REL="./.venv/$VENV_SUBDIR/python$EXE"
+CVTRUST_REL="./.venv/$VENV_SUBDIR/cvtrust$EXE"
+PYTEST_REL="./.venv/$VENV_SUBDIR/pytest$EXE"
+
 # ---------------------------------------------------------------- options --
 
 DO_WEB=1          # Module 5 frontend (Node)
@@ -154,8 +176,6 @@ fi
 
 step "installing the Python engine into .venv"
 
-VENV_PY="$ROOT/.venv/bin/python"
-
 if [ "$FORCE" = 1 ] && [ -d .venv ]; then
     info "--force: removing the existing .venv"
     rm -rf .venv
@@ -164,8 +184,10 @@ fi
 if [ -x "$VENV_PY" ] && "$VENV_PY" -c 'import sys' 2>/dev/null; then
     skip ".venv already exists — reusing it"
 elif [ -e .venv ]; then
-    die ".venv exists but its interpreter does not work" \
-        "Something interrupted an earlier setup, or the clone moved on disk." \
+    die ".venv exists but has no working $VENV_SUBDIR/python$EXE" \
+        "Either an earlier setup was interrupted, or .venv was created for a" \
+        "different OS — a venv is not portable between Linux/macOS (bin/) and" \
+        "Windows (Scripts/), even when the rest of the clone is shared." \
         "Re-create it:  ./setup.sh --force"
 else
     info "creating .venv"
@@ -194,7 +216,6 @@ else
     "$VENV_PY" -m pip install $PIP_ARGS -e .
 fi
 
-CVTRUST="$ROOT/.venv/bin/cvtrust"
 [ -x "$CVTRUST" ] || die "the cvtrust command was not installed into .venv" \
     "Re-run with a clean environment:  ./setup.sh --force"
 ok "$("$CVTRUST" version)"
@@ -284,7 +305,7 @@ if [ "$DO_FEED" = 1 ]; then
         skip "attack_lab/ already built (Module 1)"
     else
         info "Module 1: generating the corpus and all six dataset scenarios (~50 s)"
-        ./scripts/evaluate.sh >/dev/null || die "scripts/evaluate.sh failed" \
+        CVTRUST="$CVTRUST" ./scripts/evaluate.sh >/dev/null || die "scripts/evaluate.sh failed" \
             "Re-run it on its own to see the output:  ./scripts/evaluate.sh"
         ok "attack_lab/ built, reports/evaluation.json written"
     fi
@@ -293,7 +314,7 @@ if [ "$DO_FEED" = 1 ]; then
         skip "provenance_lab/ already built (Module 3)"
     else
         info "Module 3: building the provenance lab, 28 scenarios (~10 s)"
-        ./scripts/provenance-evaluate.sh >/dev/null || die "scripts/provenance-evaluate.sh failed" \
+        CVTRUST="$CVTRUST" ./scripts/provenance-evaluate.sh >/dev/null || die "scripts/provenance-evaluate.sh failed" \
             "Re-run it on its own to see the output:  ./scripts/provenance-evaluate.sh"
         ok "provenance_lab/ built"
     fi
@@ -312,7 +333,7 @@ if [ "$DO_FEED" = 1 ]; then
             rm -f "$MODEL_LOG"
             die "cvtrust lab model-build failed" \
                 "This step needs the torch runtime. Check what is available:" \
-                "  ./.venv/bin/cvtrust info" \
+                "  $CVTRUST_REL info" \
                 "Setup can continue without it:  ./setup.sh --skip-model-lab"
         fi
         rm -f "$MODEL_LOG"
@@ -328,7 +349,7 @@ if [ "$DO_FEED" = 1 ]; then
         "$CVTRUST" -q lab assurance-build --out assurance_lab --per-class 8 >/dev/null || die \
             "cvtrust lab assurance-build failed" \
             "Re-run it on its own to see the output:" \
-            "  ./.venv/bin/cvtrust lab assurance-build --out assurance_lab --per-class 8"
+            "  $CVTRUST_REL lab assurance-build --out assurance_lab --per-class 8"
         ok "assurance_lab/ built"
     fi
 
@@ -348,7 +369,7 @@ if [ "$DO_FEED" = 1 ]; then
             rm -f "/tmp/cvtrust-analyst-export.$$.log"
             die "cvtrust analyst export failed" \
                 "Re-run it on its own to see the output:" \
-                "  ./.venv/bin/cvtrust analyst export --out reports/analyst"
+                "  $CVTRUST_REL analyst export --out reports/analyst"
         fi
         grep -E '[0-9]+/[0-9]+ scenario' "/tmp/cvtrust-analyst-export.$$.log" | sed 's/^/    /' || true
         rm -f "/tmp/cvtrust-analyst-export.$$.log"
@@ -357,7 +378,7 @@ if [ "$DO_FEED" = 1 ]; then
 else
     step "attack labs and analyst feed (skipped: --skip-feed)"
     skip "the frontend will report that it has no data until you run:"
-    skip "  ./setup.sh   (or: ./.venv/bin/cvtrust analyst export --out reports/analyst)"
+    skip "  ./setup.sh   (or: $CVTRUST_REL analyst export --out reports/analyst)"
 fi
 
 # -------------------------------------------------------- 6. smoke checks --
@@ -373,7 +394,7 @@ for module in ("cvtrust", "cvtrust.cli.main", "cvtrust.attack_lab", "cvtrust.ass
 PYCHECK
 ok "cvtrust imports, including the lab generators"
 
-"$CVTRUST" info >/dev/null || die "'cvtrust info' failed" "Run it directly to see why:  ./.venv/bin/cvtrust info"
+"$CVTRUST" info >/dev/null || die "'cvtrust info' failed" "Run it directly to see why:  $CVTRUST_REL info"
 ok "cvtrust info reports its coverage statement"
 
 if [ -f reports/analyst/index.json ]; then
@@ -406,8 +427,8 @@ printf '\n%sSetup complete.%s The machine can now be disconnected: nothing below
 printf 'reaches the network at run time.\n\n'
 printf '%sRun the engine%s\n' "$BOLD" "$RESET"
 printf '  ./scripts/demo.sh                     the whole story, end to end, ~15 s\n'
-printf '  ./.venv/bin/cvtrust info              what this build does and does not cover\n'
-printf '  ./.venv/bin/pytest                    the full test suite, ~5 min\n\n'
+printf '  %-34s what this build does and does not cover\n' "$CVTRUST_REL info"
+printf '  %-34s the full test suite, ~5 min\n\n' "$PYTEST_REL"
 if [ "$DO_WEB" = 1 ]; then
     printf '%sRun the analyst platform (Module 5)%s\n' "$BOLD" "$RESET"
     if [ -x ./run.sh ]; then
@@ -417,6 +438,6 @@ if [ "$DO_WEB" = 1 ]; then
     printf '  ./scripts/module5-verify.sh           engine -> feed -> UI, end to end\n\n'
 fi
 printf '%sRefresh the analyst feed after changing the engine%s\n' "$BOLD" "$RESET"
-printf '  ./.venv/bin/cvtrust analyst export --out reports/analyst\n\n'
+printf '  %s analyst export --out reports/analyst\n\n' "$CVTRUST_REL"
 printf 'See README.md for the full command list and docs/deployment.md for\n'
 printf 'air-gapped installation.\n'
