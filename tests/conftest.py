@@ -307,3 +307,161 @@ def signed_log(signing_key, make_record):
             key,
         )
     return provenance_log
+
+
+# ---------------------------------------------------------------------------
+# Module 4 fixtures
+#
+# The assurance lab is cheap — it applies image transforms rather than training
+# anything — so it is built once per session at a size chosen to clear every
+# sample floor in ShiftConfig while keeping the permutation tests quick.
+# ---------------------------------------------------------------------------
+
+#: 6 classes x 4 contributors x PER_CLASS_SHIFT samples. At 5 this is 120 per
+#: side, which clears the 20-sample floors, the 50-sample PSI floor and the
+#: 80-sample cross-fitted covariance floor with room to spare.
+PER_CLASS_SHIFT = 5
+
+
+@pytest.fixture(scope="session")
+def assurance_lab(tmp_path_factory: pytest.TempPathFactory):
+    """Reference corpus plus every population pair."""
+    from cvtrust.attack_lab.assurance_scenarios import build_lab
+
+    out = tmp_path_factory.mktemp("assurance_lab")
+    return build_lab(out, seed=SEED, per_class_per_contributor=PER_CLASS_SHIFT)
+
+
+@pytest.fixture(scope="session")
+def clean_shift(assurance_lab):
+    """A resolved assessment over two independent draws from one process.
+
+    Session-scoped because a permutation energy test over 120 points a side is
+    the most expensive single operation in the Module 4 suite, and several
+    tests need the same answer.
+    """
+    from cvtrust.assurance_pipeline import characterise_shift
+    from cvtrust.core.config import Config
+    from cvtrust.shift.context import OperationalContext
+
+    pair = assurance_lab.pair("clean_baseline")
+    assessment, _ = characterise_shift(
+        pair.reference_root,
+        pair.current_root,
+        Config(),
+        reference_context=OperationalContext.from_mapping(pair.reference_context),
+        current_context=OperationalContext.from_mapping(pair.current_context),
+    )
+    return assessment
+
+
+@pytest.fixture(scope="session")
+def declared_shift(assurance_lab):
+    """A real shift that a declared operational change accounts for."""
+    from cvtrust.assurance_pipeline import characterise_shift
+    from cvtrust.core.config import Config
+    from cvtrust.shift.context import OperationalContext
+
+    pair = assurance_lab.pair("operational_illumination")
+    assessment, _ = characterise_shift(
+        pair.reference_root,
+        pair.current_root,
+        Config(),
+        reference_context=OperationalContext.from_mapping(pair.reference_context),
+        current_context=OperationalContext.from_mapping(pair.current_context),
+    )
+    return assessment
+
+
+@pytest.fixture(scope="session")
+def unexplained_shift(assurance_lab):
+    """The same physical change with the declaration saying nothing moved."""
+    from cvtrust.assurance_pipeline import characterise_shift
+    from cvtrust.core.config import Config
+    from cvtrust.shift.context import OperationalContext
+
+    pair = assurance_lab.pair("undeclared_illumination")
+    assessment, _ = characterise_shift(
+        pair.reference_root,
+        pair.current_root,
+        Config(),
+        reference_context=OperationalContext.from_mapping(pair.reference_context),
+        current_context=OperationalContext.from_mapping(pair.current_context),
+    )
+    return assessment
+
+
+@pytest.fixture
+def make_evidence():
+    """Build a NormalizedEvidence directly, for policy-engine unit tests.
+
+    Used ONLY where the lab cannot produce the input a rule needs — the
+    end-to-end scenarios compose real Module 1-3 findings and never touch this.
+    Constructing evidence by hand to test a rule is legitimate; constructing it
+    to test the *system* would be testing the fixture.
+    """
+    from cvtrust.assurance.evidence import normalise
+    from cvtrust.core.evidence import (
+        AssetRef,
+        AssetType,
+        Category,
+        ConfidenceBasis,
+        Coverage,
+        Disposition,
+        EvidenceItem,
+        Finding,
+        Severity,
+        make_finding_id,
+        utc_now_iso,
+    )
+
+    def _make(
+        *,
+        attack_class: str,
+        severity: Severity = Severity.HIGH,
+        confidence: float = 0.9,
+        basis: ConfidenceBasis = ConfidenceBasis.DETERMINISTIC,
+        coverage: Coverage = Coverage.SUPPORTED,
+        module: int = 1,
+        detector: str = "test_detector",
+        asset_id: str = "asset-1",
+        category: Category = Category.DATA,
+        limitations: tuple[str, ...] = (),
+        discriminator: tuple[str, ...] = (),
+    ):
+        if basis is ConfidenceBasis.DETERMINISTIC:
+            confidence = 1.0
+        asset = AssetRef(type=AssetType.DATASET, id=asset_id)
+        finding = Finding(
+            finding_id=make_finding_id(
+                method=detector,
+                method_version="1.0",
+                attack_class=attack_class,
+                asset=asset,
+                discriminator=discriminator or (severity.value, str(confidence)),
+            ),
+            observed_at=utc_now_iso(),
+            asset=asset,
+            category=category,
+            attack_class=attack_class,
+            title=f"test finding for {attack_class}",
+            severity=severity,
+            confidence=confidence,
+            confidence_basis=basis,
+            evidence=(
+                EvidenceItem(
+                    kind="test_observation",
+                    statement="a measured value stands behind this finding",
+                    observation={"value": 1, "attack_class": attack_class},
+                ),
+            ),
+            method=detector,
+            method_version="1.0",
+            coverage=coverage,
+            limitations=limitations,
+            disposition=Disposition.REVIEW,
+            disposition_rule="D-200-actionable",
+        )
+        return normalise(finding, source_module=module, source_report_id="R-test")
+
+    return _make

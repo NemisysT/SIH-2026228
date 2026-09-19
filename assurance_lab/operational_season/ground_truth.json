@@ -1,0 +1,18 @@
+{
+  "attack": false,
+  "condition": "winter_season",
+  "condition_description": "winter collection: snow cover, low solar angle, desaturated and colder ground",
+  "created_at": "2026-09-19T01:42:23Z",
+  "current_samples": 192,
+  "declared": true,
+  "expected_verdict": "SHIFT_CONSISTENT_WITH_DECLARED_CONTEXT",
+  "lab_version": "1.0",
+  "note": "a legitimate seasonal change, declared.",
+  "reference_samples": 192,
+  "scenario": "operational_season",
+  "seed": 20260917,
+  "shift_present": true,
+  "transform_expected_blocks": [
+    "colour"
+  ]
+}

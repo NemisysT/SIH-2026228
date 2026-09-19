@@ -6,6 +6,7 @@ start.  Commands are grouped by the object they act on:
 ``dataset``     scan, verify, manifest
 ``model``       manifest, verify, assess
 ``provenance``  keygen, trust, record, verify, verify-log, anchor, benchmark
+``assurance``   shift, assess  (Module 4: distribution shift + evidence fusion)
 ``lab``         generate the synthetic corpus, run attacks, evaluate, calibrate
 ``demo``        the end-to-end judge-facing demonstration
 ``info``        what this build supports and what it does not
@@ -29,8 +30,9 @@ app = typer.Typer(
     name="cvtrust",
     help="Trustworthy Computer Vision Integrity Assurance (SIH26228) — "
     "offline dataset forensics (Module 1), model forensics with backdoor "
-    "assurance (Module 2), and inference provenance with cryptographic "
-    "integrity (Module 3).",
+    "assurance (Module 2), inference provenance with cryptographic integrity "
+    "(Module 3), and distribution-shift characterisation with cross-module "
+    "evidence fusion (Module 4).",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -48,10 +50,16 @@ trust_app = typer.Typer(
     no_args_is_help=True,
 )
 provenance_app.add_typer(trust_app, name="trust")
+assurance_app = typer.Typer(
+    help="Distribution shift, cross-module evidence fusion and the assurance "
+    "policy engine (Module 4).",
+    no_args_is_help=True,
+)
 lab_app = typer.Typer(help="Synthetic attack laboratory and evaluation.", no_args_is_help=True)
 app.add_typer(dataset_app, name="dataset")
 app.add_typer(model_app, name="model")
 app.add_typer(provenance_app, name="provenance")
+app.add_typer(assurance_app, name="assurance")
 app.add_typer(lab_app, name="lab")
 
 
@@ -86,7 +94,20 @@ def info() -> None:
     from ..reporting.render import render_coverage
     from ..risk.coverage import CoverageStatement
 
-    render_coverage(CoverageStatement.build([], (1, 2, 3)))
+    from ..risk.coverage import build_capability_statement
+
+    render_coverage(CoverageStatement.build([], (1, 2, 3, 4)))
+    typer.echo()
+    typer.secho(
+        "Module 4 assurance capabilities (what this BUILD implements; a given "
+        "run still reports NOT_ASSESSED for anything its inputs did not "
+        "support):",
+        bold=True,
+    )
+    for entry in build_capability_statement().entries:
+        typer.echo(f"  {entry.capability:26s} {entry.coverage.value}")
+        if entry.reason:
+            typer.secho(f"      {entry.reason}", fg=typer.colors.YELLOW)
     typer.echo()
     typer.secho("Model formats available in this environment:", bold=True)
     if REGISTERED_ADAPTERS:
@@ -1014,6 +1035,309 @@ def lab_model_evaluate(
         calibration_out.parent.mkdir(parents=True, exist_ok=True)
         calibration_out.write_text(calibration.model_dump_json(indent=2), encoding="utf-8")
         typer.secho(f"calibration written to {calibration_out}", fg=typer.colors.BLUE)
+
+
+def _context_from(path: Optional[Path], inline: Optional[str], label: str):
+    """Load a declared operational context from a file or a k=v string.
+
+    Both forms exist because both are real: an analyst running one comparison
+    types ``--current-context "illumination=low,sensor=sensor_b"``, and an
+    operator wiring this into a pipeline has a JSON file already. Neither is
+    validated against anything, because nothing in this system can validate a
+    claim about the physical world, and the report says so.
+    """
+    from ..shift.context import OperationalContext
+
+    payload: dict = {}
+    if path:
+        try:
+            payload.update(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError) as exc:
+            raise CvTrustError(f"could not read {label} context from {path}: {exc}") from exc
+    if inline:
+        for item in inline.split(","):
+            if not item.strip():
+                continue
+            if "=" not in item:
+                raise CvTrustError(
+                    f"{label} context entry {item!r} is not in key=value form"
+                )
+            key, value = item.split("=", 1)
+            payload[key.strip()] = value.strip()
+    return OperationalContext.from_mapping(payload)
+
+
+@assurance_app.command("shift")
+def assurance_shift(
+    current_root: Path = typer.Argument(..., help="The population under assessment."),
+    reference_root: Optional[Path] = typer.Option(
+        None, "--reference",
+        help="A separately declared reference corpus. The strong form: the "
+             "population under assessment cannot influence its own baseline.",
+    ),
+    reference_samples: Optional[Path] = typer.Option(
+        None, "--reference-samples",
+        help="JSON list of sample ids INSIDE the current dataset to use as the "
+             "reference instead. Weaker, and reported as such.",
+    ),
+    config: Optional[Path] = typer.Option(None, "--config", "-c"),
+    adapter: Optional[str] = typer.Option(None, "--adapter"),
+    reference_context: Optional[Path] = typer.Option(
+        None, "--reference-context", help="JSON declaring the reference population's conditions."
+    ),
+    current_context: Optional[Path] = typer.Option(
+        None, "--current-context", help="JSON declaring the current population's conditions."
+    ),
+    declare: Optional[str] = typer.Option(
+        None, "--declare",
+        help="Inline current-population context, e.g. "
+             "'illumination=low,sensor=sensor_b'. A CLAIM, never verified.",
+    ),
+    reference_declare: Optional[str] = typer.Option(
+        None, "--reference-declare", help="Inline reference-population context."
+    ),
+    reference_provenance: Optional[str] = typer.Option(
+        None, "--reference-provenance",
+        help="Where the reference corpus came from. Recorded verbatim and never "
+             "validated.",
+    ),
+    reference_trust: str = typer.Option(
+        "UNKNOWN", "--reference-trust",
+        help="UNKNOWN | ASSERTED_BY_OPERATOR | ASSESSED_CLEAN. Never inferred.",
+    ),
+    out: Optional[Path] = typer.Option(None, "--out", "-o", help="Write the shift assessment JSON here."),
+) -> None:
+    """Characterise population-level distribution shift against a reference.
+
+    This is NOT Module 1's per-sample OOD detector. That one asks whether an
+    individual image is unusual; this asks whether the operating population has
+    moved. A population can shift without any single sample being remarkable,
+    and a handful of remarkable samples do not make a population shift.
+    """
+    from ..assurance_pipeline import characterise_shift
+    from ..shift.reference import ReferenceTrust, load_reference_ids
+
+    try:
+        cfg = _load_config(config)
+        ids = load_reference_ids(reference_samples) if reference_samples else None
+        if reference_root is None and not ids:
+            raise CvTrustError(
+                "a shift analysis needs a reference population: pass --reference "
+                "<corpus> or --reference-samples <ids.json>. Without one the "
+                "outcome would be NOT_ASSESSED, which this command will not "
+                "fabricate."
+            )
+        assessment, _ = characterise_shift(
+            reference_root, current_root, cfg,
+            reference_sample_ids=ids,
+            adapter_name=adapter,
+            reference_context=_context_from(reference_context, reference_declare, "reference"),
+            current_context=_context_from(current_context, declare, "current"),
+            reference_provenance=reference_provenance,
+            reference_trust=ReferenceTrust(reference_trust.upper()),
+        )
+    except (CvTrustError, ValueError) as exc:
+        _fail(exc if isinstance(exc, CvTrustError) else CvTrustError(str(exc)))
+        return
+
+    typer.secho(f"\n{assessment.verdict.value}", bold=True)
+    typer.echo(assessment.statement)
+    typer.echo()
+    for result in assessment.metrics:
+        typer.echo(
+            f"  {result.metric:34s} {result.status.value:20s} "
+            + (
+                f"stat={result.statistic:<12.6g} "
+                f"p={'-' if result.p_value is None else format(result.p_value, '.4g')}"
+                if result.statistic is not None
+                else (result.reason or "")
+            )
+        )
+    typer.echo()
+    typer.secho(assessment.reference.get("caveat", ""), fg=typer.colors.YELLOW)
+
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(assessment.model_dump_json(indent=2), encoding="utf-8")
+        typer.secho(f"\nshift assessment written to {out}", fg=typer.colors.BLUE)
+
+    raise typer.Exit(code=0 if assessment.resolved() else 2)
+
+
+@assurance_app.command("assess")
+def assurance_assess(
+    dataset_report: Optional[Path] = typer.Option(
+        None, "--dataset-report", help="JSON report from `cvtrust dataset scan`."
+    ),
+    model_report: Optional[Path] = typer.Option(
+        None, "--model-report", help="JSON report from `cvtrust model assess`."
+    ),
+    provenance_report: Optional[Path] = typer.Option(
+        None, "--provenance-report",
+        help="JSON report from `cvtrust provenance verify-log`.",
+    ),
+    shift_assessment: Optional[Path] = typer.Option(
+        None, "--shift", help="JSON assessment from `cvtrust assurance shift`."
+    ),
+    config: Optional[Path] = typer.Option(None, "--config", "-c"),
+    calibration: Optional[Path] = typer.Option(
+        None, "--calibration", help="Calibration table from `cvtrust lab evaluate`."
+    ),
+    out: Optional[Path] = typer.Option(None, "--out", "-o", help="Write the JSON report here."),
+    markdown_out: Optional[Path] = typer.Option(
+        None, "--markdown-out", help="Write the Markdown rendering here."
+    ),
+    full: bool = typer.Option(False, "--full", help="Print the whole lineage."),
+) -> None:
+    """Fuse the evidence supplied and produce a pipeline assurance decision.
+
+    Every argument is optional, and that is the design: every real deployment
+    is missing something, and the only honest response to a missing input is
+    NOT_ASSESSED in that scope. Supplying nothing produces a NOT_ASSESSED
+    decision rather than an ACCEPT.
+    """
+    from ..assurance_pipeline import assess_pipeline, exit_code_for
+    from ..reporting.assurance_render import (
+        render_assurance_markdown,
+        render_assurance_report,
+    )
+    from ..risk.calibration import CalibrationSet
+    from ..shift.characterize import ShiftAssessment
+
+    try:
+        cfg = _load_config(
+            config, {"calibration_path": str(calibration)} if calibration else None
+        )
+        shift = None
+        if shift_assessment:
+            shift = ShiftAssessment.model_validate(
+                json.loads(shift_assessment.read_text(encoding="utf-8"))
+            )
+        report, _ = assess_pipeline(
+            cfg,
+            dataset_report=dataset_report,
+            model_report=model_report,
+            provenance_report=provenance_report,
+            shift=shift,
+            calibration=CalibrationSet.load(cfg.calibration_path),
+        )
+    except (CvTrustError, ValueError) as exc:
+        _fail(exc if isinstance(exc, CvTrustError) else CvTrustError(str(exc)))
+        return
+
+    render_assurance_report(report, full=full)
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+        typer.secho(f"\nJSON report written to {out}", fg=typer.colors.BLUE)
+    if markdown_out:
+        markdown_out.parent.mkdir(parents=True, exist_ok=True)
+        markdown_out.write_text(render_assurance_markdown(report), encoding="utf-8")
+        typer.secho(f"Markdown report written to {markdown_out}", fg=typer.colors.BLUE)
+
+    # 0 accept, 1 review, 2 NOT ASSESSED, 3 quarantine. NOT_ASSESSED gets its
+    # own code so a pipeline can tell "we checked and found nothing" from "we
+    # checked nothing".
+    raise typer.Exit(code=exit_code_for(report))
+
+
+@lab_app.command("assurance-build")
+def lab_assurance_build(
+    out: Path = typer.Option(Path("assurance_lab"), "--out", "-o"),
+    seed: int = typer.Option(20260917, "--seed"),
+    per_class: int = typer.Option(8, "--per-class"),
+) -> None:
+    """Build the Module 4 population pairs: legitimate operational changes."""
+    from ..attack_lab.assurance_scenarios import build_lab
+
+    lab = build_lab(out, seed=seed, per_class_per_contributor=per_class)
+    typer.secho(
+        f"built {len(lab.pairs)} population pair(s) against a "
+        f"{lab.spec['reference_samples']}-sample reference -> {lab.root}",
+        fg=typer.colors.GREEN,
+    )
+
+
+@lab_app.command("assurance-evaluate")
+def lab_assurance_evaluate(
+    lab_dir: Path = typer.Argument(Path("assurance_lab"), help="Built assurance lab."),
+    config: Optional[Path] = typer.Option(None, "--config", "-c"),
+    dataset_lab: Optional[Path] = typer.Option(
+        None, "--dataset-lab", help="Built Module 1 attack lab, for the pipeline scenarios."
+    ),
+    provenance_lab: Optional[Path] = typer.Option(
+        None, "--provenance-lab", help="Built Module 3 provenance lab."
+    ),
+    model_lab: Optional[Path] = typer.Option(
+        None, "--model-lab", help="Built Module 2 model lab."
+    ),
+    out: Path = typer.Option(Path("reports/assurance-evaluation.json"), "--out", "-o"),
+    pairs_only: bool = typer.Option(
+        False, "--pairs-only", help="Skip the end-to-end pipeline scenarios."
+    ),
+) -> None:
+    """Measure the shift subsystem and the fusion engine against declared expectations.
+
+    A pipeline scenario whose upstream lab was not supplied is reported NOT_RUN
+    with the reason. It is never faked and never silently dropped.
+    """
+    import json as _json
+
+    from ..attack_lab.assurance_evaluate import (
+        evaluate_lab,
+        render_evaluation,
+        write_evaluation,
+    )
+    from ..attack_lab.assurance_scenarios import AssuranceLab, PopulationPair
+
+    try:
+        cfg = _load_config(config)
+        spec_path = lab_dir / "lab_spec.json"
+        if not spec_path.is_file():
+            raise CvTrustError(
+                f"{lab_dir} does not contain lab_spec.json; run "
+                "`cvtrust lab assurance-build` first"
+            )
+        spec = _json.loads(spec_path.read_text(encoding="utf-8"))
+        pairs = []
+        for name in spec["pairs"]:
+            truth = _json.loads(
+                (lab_dir / name / "ground_truth.json").read_text(encoding="utf-8")
+            )
+            context = _json.loads(
+                (lab_dir / name / "context.json").read_text(encoding="utf-8")
+            )
+            pairs.append(
+                PopulationPair(
+                    name=name,
+                    reference_root=lab_dir / "_reference" / "dataset",
+                    current_root=lab_dir / name / "dataset",
+                    reference_context=context["reference"],
+                    current_context=context["current"],
+                    ground_truth=truth,
+                )
+            )
+        lab = AssuranceLab(
+            root=lab_dir,
+            baseline_root=lab_dir / "_reference" / "dataset",
+            pairs=pairs,
+            spec=spec,
+        )
+        evaluation = evaluate_lab(
+            lab, cfg,
+            dataset_lab_root=dataset_lab,
+            model_lab=model_lab,
+            provenance_lab_root=provenance_lab,
+            include_scenarios=not pairs_only,
+        )
+    except CvTrustError as exc:
+        _fail(exc)
+        return
+
+    render_evaluation(evaluation)
+    write_evaluation(evaluation, out)
+    typer.secho(f"\nevaluation written to {out}", fg=typer.colors.BLUE)
+    raise typer.Exit(code=0 if evaluation.all_passed else 1)
 
 
 @lab_app.command("generate")

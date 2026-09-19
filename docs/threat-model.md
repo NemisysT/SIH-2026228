@@ -280,5 +280,83 @@ findings.
   occurred (P18).
 - Hardware-backed key storage (P20).
 - Distributed consensus, shared ledgers or cross-verifier state (P24, ADR-009).
-- Population-level distribution-shift analysis (Module 4).
 - Any combination of a cryptographic verdict with an ML assessment (ADR-014).
+
+
+---
+
+## Module 4 — the assurance trust boundary
+
+Module 4 has a threat surface the first three do not, and it is worth stating
+precisely because it is easy to overstate what the module defends.
+
+```
+   ┌──────────────────────── TRUSTED ────────────────────────┐
+   │  the analyst's host, this code, the policy rule table,  │
+   │  the configuration, the declared reference population's │
+   │  *identity* (not its cleanliness)                       │
+   └─────────────────────────────────────────────────────────┘
+                              ▲
+   ── boundary ───────────────┼──────────────────────────────
+                              │
+   ┌─────────────────────── UNTRUSTED ───────────────────────┐
+   │  Module 1/2/3 report JSON handed to this command        │
+   │  the reference population's CONTENT                     │
+   │  the current population                                 │
+   │  every declared operational context                     │
+   │  every declared acquisition metadata field              │
+   └─────────────────────────────────────────────────────────┘
+```
+
+### Assumed adversary capabilities
+
+| # | Capability | Defence |
+|---|---|---|
+| A1 | Edit an upstream report to violate the evidence schema — soften a `DETERMINISTIC` confidence, invent a severity or a fifth confidence basis, add a `trust_score` field | Refused at load. `Finding` forbids extra fields and enforces the confidence contract structurally; a malformed finding raises `ConfigError` naming the index and the violation |
+| A2 | Hand the wrong report to the wrong scope — a provenance report where a dataset report belongs | Refused. The declared module is checked against the slot, because a scope silently assessed by the wrong evidence is the worst available outcome |
+| A3 | **Withhold** a report entirely | The scope is `NOT_ASSESSED`, which outranks `ACCEPT`, so the overall disposition cannot reach `ACCEPT`. The gap is named at scope and attack-class granularity with a remedy |
+| A4 | Loosen the configuration to suppress evidence | Every knob is in the config hash and printed in the report, so a relaxed run is identifiable as one. The corroboration floors **do not apply to `DETERMINISTIC` evidence**, so the noise-suppression knob is not a switch for turning off the cryptography |
+| A5 | Flood the engine with correlated low-grade findings to manufacture corroboration or bury a real one | Family grouping: a family contributes at most one unit of independent support. Measured at 2,000 findings — the flood does not escalate, and a single deterministic failure alongside it still quarantines and is still cited |
+| A6 | Supply a legitimate operational change and hope it reads as an attack, or supply a manipulation and declare it as an operational change | Neither direction escalates on shift alone (ADR-018). The declaration is marked unvalidated; consistency is reported as consistency, never as confirmation |
+| A7 | Claim a context dimension the system does not model (`platform_serial: X-42`) | Free-form declared fields are recorded for the analyst and explain nothing. They cannot make an unexplained movement look explained |
+
+### Capabilities NOT defended against — stated up front
+
+| # | Capability | Why, and what is done instead |
+|---|---|---|
+| B1 | **Forge a well-formed upstream report.** Delete a finding, or fabricate a clean one that satisfies the schema | Module 4 does not re-verify its inputs — by design, since re-deriving a digest here could disagree with Module 2's and the disagreement would be undetectable. Every fused report is cited by id and content, so the forgery is **attributable after the fact**. Detecting it is the job of the signature on the report, not of the fusion engine |
+| B2 | **Contaminate the reference population.** Poison the baseline so the operating population looks clean | Nothing in this system establishes that a reference is clean, and no statistic can detect this. The reference's trust level defaults to `UNKNOWN`, is never inferred, and the caveat is printed on every assessment |
+| B3 | **Engineer a manipulation to move the same feature views as a declared operational change** | It would be reported identically to the legitimate change. This is stated as a limitation on every explanation rather than defended against |
+| B4 | **Exploit a correlation between two detectors that the family table does not record** | Independence is curated, not measured. The tables are printed in every report so the assumption is challengeable; there is no mechanism here that would detect an unlisted correlation |
+| B5 | **Mount an attack inside a legitimate distribution shift** | The confounding table cannot separate them. Held at `REVIEW` rather than escalated — an accepted, documented cost, and the `label_anomaly_during_shift` scenario exists to keep it visible |
+| B6 | **Compromise the analyst host** | Out of scope for every module. The policy table, the configuration and the reports are all local files |
+
+### Attacks on the engine itself
+
+| Attack | Outcome |
+|---|---|
+| Submit 10,000 findings | Linear cost; policy evaluation stays under 20 ms. No escalation from volume alone |
+| Submit findings whose attack class the family table does not know | Mapped to `UNCLASSIFIED`, which corroborates nothing and is visible in the evidence summary |
+| Submit evidence with `coverage: NOT_ASSESSED` at `CRITICAL`/0.99 | Never supports a disposition. A detector that could not run is not a detector that found something |
+| Submit an uncalibrated finding at confidence 0.99 | Refused by the schema: the uncalibrated cap is 0.6 and the `uncalibrated` limitation is mandatory |
+| Reverse the order findings arrive in | No effect. Asserted: same disposition, same fired rules, same decision id |
+| Bump the policy version without changing the rules | The report digest changes. Two runs that reached `ACCEPT` under different rule tables are not the same result and are not presented as one |
+
+### The one that is not a threat
+
+**A large, legitimate distribution shift.** Every operational pipeline has them:
+a new season, a new area of operations, a new sensor. Nine of the ten population
+pairs in the assurance lab are exactly this, and the measurement being reported
+is a false-positive rate. A system that treated a terrain change as an attack
+would be switched off within a day.
+
+### Non-goals for this build
+
+- Any aggregate trust, risk or security score (ADR-016). Not deferred to a later
+  module — it is not going to exist.
+- Re-verification of upstream reports (B1).
+- Establishing that a reference population is uncontaminated (B2).
+- Validating a declared operational context (B3).
+- Measured independence between detectors (B4).
+- The analyst web UI, dashboards and visual workflows (Module 5). Module 4
+  exposes the report schema and APIs Module 5 will consume and adds no UI.

@@ -1,0 +1,18 @@
+{
+  "attack": false,
+  "condition": "low_illumination",
+  "condition_description": "dusk/night collection: lower exposure, compressed contrast, visible read noise",
+  "created_at": "2026-09-19T01:42:23Z",
+  "current_samples": 192,
+  "declared": false,
+  "expected_verdict": "SHIFT_UNEXPLAINED_BY_DECLARED_CONTEXT",
+  "lab_version": "1.0",
+  "note": "THE central ambiguous case. The same physical change as operational_illumination, with the declaration saying nothing changed. Correct behaviour is REVIEW: the system cannot tell an undeclared legitimate change from a manipulated one, and must not pretend to.",
+  "reference_samples": 192,
+  "scenario": "undeclared_illumination",
+  "seed": 20260917,
+  "shift_present": true,
+  "transform_expected_blocks": [
+    "colour"
+  ]
+}

@@ -9,12 +9,24 @@ Blockchain & Cybersecurity · **Category:** Software
 An offline, air-gapped assurance layer for computer-vision pipelines whose
 contributors, datasets, models and inference records are all untrusted.
 
-> **Build status: Modules 1, 2 and 3 of 5 complete** — foundation and dataset
+> **Build status: Modules 1, 2, 3 and 4 of 5 complete** — foundation and dataset
 > forensics (M1), model forensics and backdoor assurance (M2), inference
-> provenance and cryptographic integrity (M3). Evidence fusion (M4) and the
-> analyst web platform (M5) are **not** implemented, and every report declares
-> them `NOT_ASSESSED` rather than silently omitting them. Run `cvtrust info` to
-> see exactly what this build assesses.
+> provenance and cryptographic integrity (M3), distribution shift and evidence
+> fusion (M4). The analyst web platform (M5) is **not** implemented, and every
+> report declares what it did not assess rather than silently omitting it. Run
+> `cvtrust info` to see exactly what this build assesses.
+>
+> **There is no trust score.** Module 4 combines evidence from all four scopes
+> by an explicit, versioned table of 23 rules — printed in full in every report
+> — and never by arithmetic. An analyst who disagrees with a disposition can
+> name the rule. `ACCEPT` requires **all four scopes to have been assessed**: a
+> scope nobody looked at is `NOT_ASSESSED`, which outranks `ACCEPT`, so
+> withholding a report can never be read as a clean result (ADR-016, ADR-019).
+>
+> **A distribution shift is never an attack.** Terrain, season, sensor and
+> illumination changes are the normal condition of a reconnaissance pipeline and
+> produce the same signature as manipulation. No rule escalates on shift alone
+> (ADR-018).
 >
 > **A model assurance report never states that a model is safe.** The strongest
 > positive statement available is `NO_ANOMALY_DETECTED` — a statement about the
@@ -57,7 +69,7 @@ printing what it does not claim.
 
 ```bash
 ./scripts/evaluate.sh   # generate all 6 dataset scenarios, measure every detector
-./.venv/bin/pytest      # 579 tests, ~3 min
+./.venv/bin/pytest      # 811 tests, ~5 min
 ./.venv/bin/cvtrust info
 ```
 
@@ -84,6 +96,24 @@ adversary with their own signing key rewrote a bound model digest — which is
 **COMPROMISED** despite every signature being valid — and a truncated log
 verified *without* an anchor, which reports `NOT_DETECTABLE` rather than clean.
 
+Module 4, end to end — **needs the other three labs** for the fusion scenarios,
+and says so rather than faking them if they are absent:
+
+```bash
+./scripts/assurance-evaluate.sh     # 10 population pairs + 15 fusion scenarios, ~2 min
+```
+
+That script builds the population lab — **nine of its ten pairs contain no
+attack at all**, because the failure this module can most easily commit is
+calling a legitimate seasonal, terrain, sensor or illumination change an attack
+— then fuses the real Module 1, 2 and 3 labs through nineteen end-to-end
+scenarios. It finishes by rendering the two reports that make the design
+argument: the same Module 1 findings assessed **with** and **without** the shift
+context supplied. Identical evidence, a different governing rule, 41 of 42 items
+marked confounded in one and none in the other, and the same conservative
+disposition in both — which is itself a documented limit rather than a result
+being understated.
+
 ## What it detects today
 
 | Threat (PS §2.1) | Coverage | Method | P | R | FPR (clean) |
@@ -96,7 +126,36 @@ verified *without* an anchor, which reports `NOT_DETECTABLE` rather than clean.
 | Malformed / contradictory metadata | **SUPPORTED** | schema, dimension, bbox, category and identifier validation | deterministic | | |
 | Post-baseline dataset tampering | **SUPPORTED** | manifest re-verification (`dataset verify`) | deterministic | | |
 | Backdoor trigger injection (**data side**) | `NOT_ASSESSED` | open item — see ADR-011 | | | |
-| Population distribution shift | `NOT_ASSESSED` | Module 4 | | | |
+| Population distribution shift | PARTIAL | Module 4 — permutation energy test vs a declared reference, movement attributed to feature views, checked against the declared operational context | — | — | **0 / 10 false shift alarms** |
+
+### Module 4 — distribution shift and evidence fusion
+
+Two labs, because there are two jobs. **Ten population pairs**, nine of which
+contain no attack at all — the measurement is a *false-positive rate* on
+legitimate operational changes, which is the failure this module can most easily
+commit. **Nineteen end-to-end pipeline scenarios**, every one fusing findings
+produced by the real Module 1, 2 and 3 pipelines; nothing is hand-written.
+
+**10 / 10 shift verdicts match. 19 / 19 fusion dispositions match, firing
+exactly the rules their specs name — zero missing, zero unexpected.**
+
+| Situation | Verdict / disposition | Why it matters |
+|---|---|---|
+| Two clean draws from one process | `NO_SHIFT_DETECTED`, energy *p* = 0.954 | The headline false-positive measurement |
+| Declared night collection / sensor swap / winter / desert | `SHIFT_CONSISTENT_WITH_DECLARED_CONTEXT` | Four legitimate operational changes, none escalated |
+| The same change, undeclared | `SHIFT_UNEXPLAINED_BY_DECLARED_CONTEXT` → `REVIEW` | An open question, phrased as one — never "attack" |
+| A sensor swap declared as an illumination change | `SHIFT_PARTIALLY_EXPLAINED`, residual named: `gradient` | The check has teeth |
+| Six current samples against 192 | `INSUFFICIENT_SAMPLE` → `NOT_ASSESSED` | A refusal to answer, not a negative answer |
+| Legitimate shift + independent signature failure | `QUARANTINE` from **provenance**; distribution stays `REVIEW` | The escalation is carried by the cryptography, not by the shift |
+| Dataset anomaly during a legitimate shift | `REVIEW`, 20 of 24 items confounded | The documented cost: confounded evidence is not refuted, and not escalated |
+| Three clean scopes, one report withheld | `NOT_ASSESSED` | Absence never reads as clean |
+| 2,000 correlated findings from one family | No escalation; one real failure alongside still quarantines and is still cited | A family contributes at most one unit of independent support |
+
+Measured cost (240 samples per side): shift characterisation 3.2 s (dominated by
+feature extraction, not by the statistics), evidence normalisation 0.5 ms,
+policy evaluation over 23 rules **0.18 ms and independent of population size**,
+report construction 13 ms. At 10,000 fused findings the whole fusion layer costs
+150 ms.
 
 ### Module 3 — inference provenance
 
@@ -287,6 +346,22 @@ MODEL ARTIFACT (untrusted)
    │                          → activation → trigger   (fixed dependency chain)
    ├─ AssessmentMatrix        six levels, NEVER combined into one score (ADR-012)
    └─ ModelAssuranceReport    the SAME Finding schema, policy and coverage statement
+
+REFERENCE vs CURRENT POPULATION        M1 · M2 · M3 REPORTS (untrusted JSON)
+   ├─ ShiftCharacterizer      energy (omnibus) + mean · covariance · PSI · JS
+   │                          every metric: ASSESSED | INSUFFICIENT_SAMPLE
+   │                                      | NOT_ASSESSED
+   ├─ OperationalContext      a DECLARED claim, checked, never validated
+   ├─ ShiftAssessment ──────► one of seven verdicts. Never a score. Never "attack"
+   │                                   │
+   ├─ NormalizedEvidence[]    findings carried VERBATIM; nothing is rewritten
+   ├─ EvidenceGraph           families + confounding — a family contributes AT
+   │                          MOST ONE unit of independent support (ADR-017)
+   ├─ AssurancePolicyEngine   23 explicit versioned rules, printed in the report
+   ├─ ScopeDecision × 4       dataset · model · provenance · distribution,
+   │                          kept separate and never collapsed (ADR-014)
+   └─ PipelineAssuranceReport strictest scope wins, with the scope NAMED.
+                              NO aggregate score, and there will not be one
 ```
 
 The detectors are not five independent demos. `near_duplicate` publishes the
@@ -418,6 +493,20 @@ cvtrust provenance verify      <record.json> --store trust_store.json
 cvtrust provenance benchmark   --records 200
 cvtrust lab provenance-build    --out provenance_lab
 cvtrust lab provenance-evaluate provenance_lab
+
+cvtrust assurance shift  <current-root> --reference <reference-root> \
+                         --declare "illumination=low,acquisition_mode=night" \
+                         --reference-declare "illumination=daylight" \
+                         --reference-provenance "2025 baseline collection, hand-carried" \
+                         --out reports/shift.json
+cvtrust assurance assess --dataset-report reports/dataset.json \
+                         --model-report reports/model.json \
+                         --provenance-report reports/provenance.json \
+                         --shift reports/shift.json \
+                         --out reports/assurance.json --markdown-out reports/assurance.md
+cvtrust lab assurance-build    --out assurance_lab --per-class 8
+cvtrust lab assurance-evaluate assurance_lab --dataset-lab attack_lab \
+                         --model-lab model_lab --provenance-lab provenance_lab
 cvtrust demo
 ```
 
@@ -432,17 +521,29 @@ decision someone made, not a default they inherited. And `verify-log` without an
 anchor reports tail truncation as `NOT_DETECTABLE`, never as clean — a truncated
 chain is internally perfect, and no amount of verification can see past that.
 
-`dataset scan`, `model assess` and `provenance verify-log` exit codes compose:
-`0` clean · `1` review · `2` explained error · `3` quarantine or verification
-failure.
+`assurance shift` takes `--declare` as a **claim**, never as a fact. The
+declaration is recorded, checked against where the movement actually landed, and
+marked `declaration_validated: false` in the output — consistency between an
+observed shift and a declared change is reported as consistency, never as
+confirmation. `--reference-trust` defaults to `UNKNOWN` and is never inferred:
+nothing in this system establishes that a reference population is clean.
+
+`assurance assess` takes **every argument optionally**, and that is the design.
+Every real deployment is missing something, and the only honest response to a
+missing input is `NOT_ASSESSED` in that scope. Supplying nothing produces a
+`NOT_ASSESSED` decision, never an `ACCEPT`.
+
+`dataset scan`, `model assess`, `provenance verify-log` and `assurance assess`
+exit codes compose: `0` clean/accept · `1` review · `2` explained error or
+`NOT_ASSESSED` · `3` quarantine or verification failure.
 
 ## Documentation
 
 | | |
 |---|---|
-| [`docs/architecture.md`](docs/architecture.md) | Data flow, interfaces, and all fifteen architecture decision records |
+| [`docs/architecture.md`](docs/architecture.md) | Data flow, interfaces, and all twenty architecture decision records |
 | [`docs/threat-model.md`](docs/threat-model.md) | Trust boundary, adversary capabilities, per-threat residual risk, attacks on the detectors themselves |
-| [`docs/research.md`](docs/research.md) | Method cards with assumptions and access requirements, methods **rejected** with reasons, and the eleven defects the evaluation harnesses caught |
+| [`docs/research.md`](docs/research.md) | Method cards with assumptions and access requirements, methods **rejected** with reasons, and the twenty defects the evaluation harnesses caught |
 | [`docs/model-security.md`](docs/model-security.md) | **Module 2.** Coverage matrix, access modes, measured results, the two methods that did not work, benchmark vendoring |
 | [`docs/provenance.md`](docs/provenance.md) | **Module 3.** The record schema, canonicalisation, verification evidence, the failure taxonomy, replay and chain models, the attack lab, measured performance, and what the module does not establish |
 | [`docs/cryptographic-model.md`](docs/cryptographic-model.md) | **Module 3.** Primitives and why each, what a signature does and does not establish, the host-trust assumption stated plainly, and the threats cryptography does not address |
@@ -455,6 +556,7 @@ failure.
 | [`docs/module-1-plan.md`](docs/module-1-plan.md) | The design Module 1 was built to |
 | [`docs/module-2-plan.md`](docs/module-2-plan.md) | The design Module 2 was built to |
 | [`docs/module-3-plan.md`](docs/module-3-plan.md) | The design Module 3 was built to, and the nine defects the provenance lab caught |
+| [`docs/module-4-plan.md`](docs/module-4-plan.md) | **Module 4.** The design it was built to, the five shift methods and why those five, the fusion model, and the nine defects the assurance lab caught |
 
 ## Stack
 

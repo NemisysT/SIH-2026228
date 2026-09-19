@@ -40,6 +40,24 @@ from ..core.config import FeatureConfig
 
 EPS = 1e-8
 
+#: Names of the 23 values in the acquisition block, in the order
+#: :meth:`ClassicalFeatureExtractor._acquisition` emits them.
+#:
+#: Module 4 reports marginal distribution shift on a *named* subset of these,
+#: because "PSI 0.41 on mean_luminance" is a statement an analyst can check
+#: against the imagery and "PSI 0.41 on feature 597" is not.
+ACQUISITION_NAMES: tuple[str, ...] = (
+    "mean_red", "mean_green", "mean_blue",
+    "std_red", "std_green", "std_blue",
+    "mean_luminance", "std_luminance",
+    "luminance_p01", "luminance_p05", "luminance_p25", "luminance_p50",
+    "luminance_p75", "luminance_p95", "luminance_p99",
+    "focus_laplacian_variance", "noise_floor_laplacian_mad",
+    "mean_saturation", "std_saturation",
+    "mean_value", "std_value",
+    "edge_density", "luminance_entropy",
+)
+
 
 def _l2(vector: np.ndarray) -> np.ndarray:
     norm = float(np.linalg.norm(vector))
@@ -55,6 +73,7 @@ class ClassicalFeatureExtractor:
     def __init__(self, cfg: FeatureConfig | None = None) -> None:
         self.cfg = cfg or FeatureConfig()
         self._dim: int | None = None
+        self._blocks: tuple[tuple[str, int, int], ...] | None = None
 
     @property
     def dim(self) -> int:
@@ -68,23 +87,79 @@ class ClassicalFeatureExtractor:
             "name": self.name,
             "version": self.version,
             "dim": self.dim,
-            "blocks": ["structure", "colour", "gradient", "dct", "acquisition"],
+            "blocks": [name for name, _, _ in self.blocks()],
+            "block_spans": {
+                name: [start, end] for name, start, end in self.blocks()
+            },
             "requires_pretrained_weights": False,
             "deterministic": True,
         }
 
+    def blocks(self) -> tuple[tuple[str, int, int], ...]:
+        """Where each view lives in the concatenated vector: ``(name, start, end)``.
+
+        Added for Module 4.  A population-level mean shift is far more useful to
+        an analyst when it can be attributed to a *view* — "the movement is in
+        the colour and acquisition blocks" reads as an illumination or sensor
+        change, "the movement is in the structure and gradient blocks" reads as
+        a content or terrain change — and that attribution needs the layout,
+        which was previously implicit in :meth:`extract`.
+
+        Measured from a probe rather than recomputed from configuration, so the
+        spans cannot drift away from what ``extract`` actually produces.
+        """
+        if self._blocks is None:
+            probe = Image.new("RGB", (64, 64), (127, 127, 127))
+            rgb = self._prepare(probe)
+            gray = rgb @ np.array([0.299, 0.587, 0.114])
+            sizes = (
+                ("structure", self._structure(gray).size),
+                ("colour", self._colour(rgb).size),
+                ("gradient", self._gradient(gray).size),
+                ("dct", self._dct(gray).size),
+                ("acquisition", self._acquisition(rgb, gray).size),
+            )
+            spans: list[tuple[str, int, int]] = []
+            cursor = 0
+            for name, size in sizes:
+                spans.append((name, cursor, cursor + int(size)))
+                cursor += int(size)
+            self._blocks = tuple(spans)
+        return self._blocks
+
     def extract(self, image: Image.Image) -> np.ndarray:
+        return self.extract_with_blocks(image)[0]
+
+    def extract_with_blocks(
+        self, image: Image.Image
+    ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+        """The embedding, plus each view **before** normalisation.
+
+        Added for Module 4.  The concatenated vector is L2-normalised per block
+        and then again globally, which is right for distance work and wrong for
+        reading a physical quantity off: the acquisition block's mean luminance
+        is no longer a mean luminance once it has been divided by the block's
+        norm twice.  Module 4 needs the physical values to report an
+        illumination or sensor change in units an analyst can argue with, so
+        the raw blocks are returned alongside rather than recomputed in a
+        second decode pass.
+
+        ``extract`` is unchanged and still returns exactly what it always did.
+        """
         rgb = self._prepare(image)
         gray = rgb @ np.array([0.299, 0.587, 0.114])
 
-        blocks = [
-            self._structure(gray),
-            self._colour(rgb),
-            self._gradient(gray),
-            self._dct(gray),
-            self._acquisition(rgb, gray),
-        ]
-        return _l2(np.concatenate([_l2(b) for b in blocks])).astype(np.float32)
+        raw = {
+            "structure": self._structure(gray),
+            "colour": self._colour(rgb),
+            "gradient": self._gradient(gray),
+            "dct": self._dct(gray),
+            "acquisition": self._acquisition(rgb, gray),
+        }
+        vector = _l2(
+            np.concatenate([_l2(raw[name]) for name, _, _ in self.blocks()])
+        ).astype(np.float32)
+        return vector, raw
 
     # -- preparation ----------------------------------------------------
 

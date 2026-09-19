@@ -215,10 +215,81 @@ These exist so that a documented boundary and the code cannot drift apart:
   that drifts from the code is a threshold the analyst believes is active and
   is not.
 
+## Module 4 test layers
+
+Module 4 adds **232 tests** (811 total). The organising principle inverts here,
+and deliberately: for Modules 1–3 most of the lab is attacks, but **nine of
+Module 4's ten population pairs contain no attack at all.** The failure this
+module can most easily commit is calling a legitimate seasonal, terrain, sensor
+or illumination change an attack, so the majority of its evidence is a measured
+false-positive rate rather than a detection rate.
+
+| File | Tests | What it protects |
+|---|---:|---|
+| `tests/unit/test_shift_metrics.py` | 33 | Each metric's contract, and the sample floors that bound it. The permutation p-value floor is 1/(B+1) and is reported; the cross-fitted covariance refuses below 80 reference samples; the PSI budget auto-scales to `ceil(m/alpha)−1` so BH significance is reachable at all — with the off-by-one asserted exactly (2299, not 2300), because that was a real bug; `INSUFFICIENT_SAMPLE` is a distinct status from `NOT_ASSESSED`, with distinct remedies. |
+| `tests/unit/test_shift_context.py` | 20 | The distinction the whole module rests on: *the declaration predicts this movement* versus *the declaration is true*. Consistency is asserted to be reported as consistency and never as confirmation; the declaration carries `declaration_validated: false`; a missing declaration is a missing input, not a suspicious one; the heuristic table is printed so an analyst can argue with it; and `gradient` is asserted present in the `sensor` row, with the measurement that forced it in the docstring. Also the reference-contamination caveats and the binding of the feature space into the reference identity. |
+| `tests/unit/test_assurance_evidence.py` | 24 | Normalisation, families and the corroboration floors. Findings are immutable inputs; `DETERMINISTIC` evidence is exempt from the confidence floor; `NOT_ASSESSED` coverage never supports; demoted evidence stays in the graph and in the lineage rather than disappearing. |
+| `tests/unit/test_assurance_policy.py` | 39 | Every rule fires on the evidence it documents and not otherwise — and, more importantly, the **prohibitions**. Two of these walk the source: one over the AST looking for arithmetic on float literals and score-like identifiers, one over every report schema's `model_fields` looking for an aggregate field. Both exist because an earlier version of the first test matched the *docstring explaining why there are no weights*. |
+| `tests/integration/test_assurance_pipeline.py` | 30 | The full path over real imagery and real upstream findings. Nothing here hand-writes evidence: a rule that fires on evidence no detector actually emits is exactly what an integration test exists to catch, and a fixture written by the same author would hide it. |
+| `tests/regression/test_assurance_determinism.py` | 19 | Three separate properties, each able to fail without the others noticing: the *measurement* is reproducible (same p-values, not merely the same verdict), the *decision* is reproducible and order-independent, and the *report digest* excludes exactly the fields that legitimately move — asserted by mutating timestamps and timings and showing the digest survives, and by bumping the policy version and showing it does not. |
+| `tests/security/test_assurance_attacks.py` | 30 | Attacks on the assurance layer itself: a downgraded `DETERMINISTIC` finding, an out-of-range confidence, an invented severity or basis, a smuggled `trust_score` field, a report with no findings array, a model report in the dataset slot, withheld reports, a loosened configuration that must not reach the cryptography, and the rule table's own integrity (every fired rule is a published rule; every cited finding was supplied). One test asserts the attack the schema **cannot** stop — deleting a well-formed finding — and what is done instead. |
+| `tests/adversarial/test_assurance_evasion.py` | 32 | Both directions in one file, because the system can only be judged on the pair. Escalation survives a 2,000-finding flood; five correlated detectors are one phenomenon; high-confidence/low-severity does not escalate and high-severity/moderate-confidence is not dismissed; both "valid provenance + suspicious model" and "invalid provenance + clean model" stay expressible; no rule escalates on shift alone, asserted over the **whole verdict vocabulary** rather than one case; and four real-imagery false-positive checks. |
+| `tests/security/test_offline.py` | +5 | The Module 4 pathways, amputated **one stage at a time** rather than by a single end-to-end run — shift analysis, evidence normalisation, policy evaluation, end-to-end assurance with report generation, and lab construction. An end-to-end run would pass if any one stage were skipped, and an unexercised stage is where an accidental dependency survives. |
+
+### Two rules that exist because a test found a hole
+
+`RULE-DATA-004` and `RULE-SHIFT-050` were both added during evaluation, not
+during design, and both close the same *kind* of defect — evidence that reached
+no rule and therefore vanished from the report:
+
+- When every dataset finding was confounded by a coincident shift,
+  `RULE-DATA-002` (needs unconfounded evidence) and `RULE-DATA-010` (needs no
+  evidence) both declined to fire and **the dataset scope disappeared** — which
+  reads as "nothing to say about the dataset" when the truth was "there is a
+  finding and it cannot be separated from the shift". `RULE-DATA-004`:
+  *a confounded finding is not a refuted one.*
+- Per-sample OOD evidence reached no rule at all when no population-level shift
+  assessment was supplied. `RULE-SHIFT-050` catches it, and is silenced when a
+  shift assessment exists so the same phenomenon is not counted twice.
+
+### The legitimate-but-unusual group
+
+Four of the nineteen pipeline scenarios contain no attack at all, and their
+expectations were **measured before they were written down**. Two reach
+`ACCEPT` (a clean model with unusual weight statistics assessed with no
+reference; the same input legitimately reprocessed). Two deliberately do not:
+re-serialisation reaches `REVIEW` ("the artifact changed and the model did
+not"), and a legitimately fine-tuned model reaches `QUARANTINE`, because the
+artifact supplied is not the artifact that was assured. The rule's wording
+carries the whole distinction — *"the model is not the assured artifact"*, never
+"tampered", never "malicious" — and `legitimate_finetuning` exists to keep
+`QUARANTINE ≠ malicious` visible rather than assumed.
+
+### Three lab expectations that were wrong, and one rule that is not exercised
+
+Recorded because "the tests pass" is not the interesting statement.
+
+The `misdeclared_illumination` scenario expected `PARTIALLY_EXPLAINED` and got
+`CONSISTENT`. **The engine was right**: illumination, season and terrain all
+place ~93% of their displacement in the colour view, so a season declaration
+genuinely does cover an illumination movement. It was renamed
+`misdeclared_illumination_as_season` and kept as the explicit *negative control*
+for the explanation mechanism, with `misdeclared_sensor_as_illumination` added
+as the paired positive control. The `dataset_only` scenario expected `ACCEPT`
+and got `NOT_ASSESSED` — also right, and now published as
+`accept_requires_full_coverage`. The model baseline was `clean_retrain_0`, which
+is an *independently retrained* model and therefore genuinely mismatches the
+reference; it was replaced by a self-comparison.
+
+**`RULE-SHIFT-050` is not reached by any of the nineteen pipeline scenarios**,
+because `ood_without_shift_assessment` resolves at the scope level before it. It
+is covered by unit and adversarial tests only. Stated here rather than left as
+an implicit gap.
+
 ### Running them
 
 ```bash
-./.venv/bin/pytest                               # 579 tests, ~3 min
+./.venv/bin/pytest                               # 811 tests, ~7 min
 ./.venv/bin/pytest -m "not slow"                 # fast subset
 ./.venv/bin/pytest tests/security                # the offline guarantee
 ./.venv/bin/pytest -m adversarial                # evasion and boundary tests

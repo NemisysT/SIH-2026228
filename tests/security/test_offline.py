@@ -118,6 +118,117 @@ def test_building_the_model_lab_needs_no_network(no_network, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# 1b. Dynamic: the Module 4 pathways, each amputated separately
+# ---------------------------------------------------------------------------
+#
+# Broken out one stage at a time rather than covered by a single end-to-end
+# run, because the end-to-end run would pass if any one stage were skipped, and
+# an unexercised stage is exactly where an accidental dependency survives.
+
+
+@pytest.mark.slow
+def test_shift_analysis_completes_with_no_network(no_network, assurance_lab):
+    """Feature extraction, permutation nulls and context explanation."""
+    from cvtrust.assurance_pipeline import characterise_shift
+    from cvtrust.core.config import Config
+    from cvtrust.shift.context import OperationalContext
+
+    pair = assurance_lab.pair("operational_illumination")
+    assessment, _ = characterise_shift(
+        pair.reference_root,
+        pair.current_root,
+        Config(),
+        reference_context=OperationalContext.from_mapping(pair.reference_context),
+        current_context=OperationalContext.from_mapping(pair.current_context),
+    )
+    assert assessment.assessment_id
+    assert assessment.metrics
+
+
+@pytest.mark.slow
+def test_evidence_normalisation_completes_with_no_network(
+    no_network, unexplained_shift
+):
+    from cvtrust.assurance.evidence import build_graph, normalise_all
+    from cvtrust.core.config import Config
+    from cvtrust.risk.calibration import CalibrationSet
+    from cvtrust.risk.disposition import DispositionPolicy
+    from cvtrust.shift.findings import findings_for_shift
+
+    config = Config()
+    findings = findings_for_shift(
+        unexplained_shift,
+        calibration=CalibrationSet.load(config.calibration_path),
+        policy=DispositionPolicy(config.disposition),
+        locator="lab://offline",
+    )
+    graph = build_graph(normalise_all(findings, source_module=4))
+    assert graph.evidence
+
+
+@pytest.mark.slow
+def test_policy_evaluation_completes_with_no_network(no_network, unexplained_shift):
+    """The rule table is code and data in this process; nothing is fetched."""
+    from cvtrust.assurance.evidence import build_graph, normalise_all
+    from cvtrust.assurance.policy import AssurancePolicyEngine, PolicyState, Scope
+    from cvtrust.core.config import Config
+    from cvtrust.risk.calibration import CalibrationSet
+    from cvtrust.risk.disposition import DispositionPolicy
+    from cvtrust.shift.findings import findings_for_shift
+
+    config = Config()
+    findings = findings_for_shift(
+        unexplained_shift,
+        calibration=CalibrationSet.load(config.calibration_path),
+        policy=DispositionPolicy(config.disposition),
+        locator="lab://offline",
+    )
+    state = PolicyState(
+        graph=build_graph(normalise_all(findings, source_module=4)),
+        shift=unexplained_shift,
+        inputs={s: s is Scope.DISTRIBUTION for s in Scope},
+        coverage_gaps=(),
+        accept_explained_shift=True,
+    )
+    decisions = AssurancePolicyEngine().evaluate(state)
+    assert decisions
+
+
+@pytest.mark.slow
+def test_end_to_end_assurance_and_report_generation_need_no_network(
+    no_network, tmp_path, clean_root, clean_shift
+):
+    """Module 1 report on disk, fused with a shift assessment, rendered out."""
+    from cvtrust.assurance_pipeline import assess_pipeline
+    from cvtrust.core.config import Config
+    from cvtrust.pipeline import analyse
+    from cvtrust.reporting.assurance_render import render_assurance_markdown
+
+    dataset, _, _ = analyse(clean_root, Config())
+    path = tmp_path / "dataset.json"
+    path.write_text(dataset.model_dump_json(), encoding="utf-8")
+
+    report, _ = assess_pipeline(
+        Config(), dataset_report=path, shift=clean_shift
+    )
+    assert report.report_id
+    assert report.stable_digest()
+    assert render_assurance_markdown(report)
+    (tmp_path / "assurance.json").write_text(
+        report.model_dump_json(indent=2), encoding="utf-8"
+    )
+
+
+@pytest.mark.slow
+def test_building_the_assurance_lab_needs_no_network(no_network, tmp_path):
+    """The synthetic corpora are drawn locally, never fetched."""
+    from cvtrust.attack_lab.assurance_scenarios import build_lab
+
+    lab = build_lab(tmp_path / "lab", seed=3, per_class_per_contributor=1)
+    assert lab.pairs
+
+
+# ---------------------------------------------------------------------------
 # 2. Static: the source cannot even express a download
 # ---------------------------------------------------------------------------
 

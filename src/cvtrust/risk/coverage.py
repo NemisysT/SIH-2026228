@@ -150,9 +150,100 @@ ATTACK_CLASS_REGISTRY: dict[str, dict[str, Any]] = {
         "which compares the log head against a digest recorded out of band. "
         "Without an anchor the outcome is NOT_DETECTABLE, never clean.",
     },
-    "distribution_shift": {"title": "Distribution shift", "module": 4,
-                           "description": "Population-level deviation from a declared "
-                           "reference distribution (terrain, season, sensor, illumination)."},
+    "distribution_shift": {
+        "title": "Distribution shift", "module": 4,
+        "description": "Population-level deviation from a declared reference "
+        "distribution (terrain, season, sensor, illumination). Assessed by a "
+        "permutation energy test over the joint feature distribution, with the "
+        "movement attributed to feature views and checked against the declared "
+        "operational context. PARTIAL at best: the result is bounded by the "
+        "reference population's own integrity, which this system does not "
+        "establish, and a shift is never equated with an attack.",
+        "assessed_by": "`cvtrust assurance shift <reference> <current>`, which "
+        "needs a reference population. Without one the outcome is NOT_ASSESSED, "
+        "never a stable population.",
+    },
+}
+
+#: Module 4 capabilities that are **not attack classes**.
+#:
+#: Operational drift is not an attack and evidence fusion is not a thing an
+#: adversary does, so putting either in ``ATTACK_CLASS_REGISTRY`` would make the
+#: attack matrix mean two different things at once.  They still need a coverage
+#: declaration — the brief requires one, and an analyst needs to know whether
+#: the fusion engine actually ran — so they get their own registry with the same
+#: :class:`Coverage` vocabulary and the same rule: a capability that did not run
+#: says so.
+ASSURANCE_CAPABILITY_REGISTRY: dict[str, dict[str, Any]] = {
+    # Listed as a capability as well as an attack class (ATTACK_CLASS_REGISTRY)
+    # because the two answer different questions: the attack class says what an
+    # adversary might do, this says what the engine can measure about it. A
+    # reader auditing the capability list should not have to know to look in a
+    # second table to find out whether shift was assessed at all.
+    "distribution_shift": {
+        "title": "Population-level distribution shift",
+        "module": 4,
+        "description": "Whether the current population is drawn from the same "
+        "distribution as a declared reference, decided by a permutation energy "
+        "test over the joint feature space with four supporting metrics, "
+        "explicit sample-sufficiency handling, and a reference identity bound "
+        "to the feature space it was measured in. Bounded by the reference "
+        "population's own integrity, which nothing here establishes.",
+    },
+    "operational_drift": {
+        "title": "Operational drift, distinguished from manipulation",
+        "module": 4,
+        "description": "Whether an observed population shift is accounted for by "
+        "a declared operational change (season, terrain, sensor, illumination, "
+        "acquisition mode). PARTIAL and permanently so: the mapping from a "
+        "declared change to the feature views it would move is a documented, "
+        "uncalibrated heuristic over one feature space, and a declaration is a "
+        "claim by the supplying side that nothing here can verify.",
+    },
+    "evidence_fusion": {
+        "title": "Cross-module evidence fusion",
+        "module": 4,
+        "description": "Findings from Modules 1-4 normalised into one evidence "
+        "model and combined by an explicit, versioned rule table. No score, no "
+        "weights, no arithmetic across evidence classes.",
+    },
+    "evidence_dependency": {
+        "title": "Dependency-aware aggregation (double-counting prevention)",
+        "module": 4,
+        "description": "Evidence is grouped into phenomenon families and a "
+        "family contributes at most one unit of independent support, however "
+        "many findings or detectors it contains. Evidence whose confounding "
+        "phenomenon is present in the run is marked and stops counting as "
+        "independent corroboration.",
+    },
+    "cross_module_lineage": {
+        "title": "Decision lineage back to source findings",
+        "module": 4,
+        "description": "Every disposition names the rules that produced it and "
+        "every rule names the findings that made it fire, back to the module, "
+        "detector and version that emitted them.",
+    },
+    "coverage_aware_assurance": {
+        "title": "Coverage-aware disposition",
+        "module": 4,
+        "description": "A scope with no input is NOT_ASSESSED, never ACCEPT, and "
+        "the unassessed areas are carried in the decision rather than inferred "
+        "from an absence.",
+    },
+    "policy_disposition": {
+        "title": "Explicit, versioned assurance policy",
+        "module": 4,
+        "description": "The rule table is data, is emitted verbatim into every "
+        "report, and is reproducible from (inputs, policy version, "
+        "configuration, seed, software version).",
+    },
+    "conflicting_evidence": {
+        "title": "Preservation of conflicting evidence",
+        "module": 4,
+        "description": "Disagreement between evidence classes is recorded as a "
+        "statement and never resolved into one narrative. The rule that records "
+        "it carries ACCEPT so it can neither raise nor lower an outcome.",
+    },
 }
 
 
@@ -224,3 +315,107 @@ class CoverageStatement(BaseModel):
                 )
             )
         return cls(implemented_modules=implemented_modules, entries=tuple(entries))
+
+
+class CapabilityEntry(BaseModel):
+    """Coverage for a Module 4 capability that is not an attack class."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    capability: str
+    title: str
+    coverage: Coverage
+    owning_module: int
+    detail: str | None = None
+    reason: str | None = None
+    limitations: tuple[str, ...] = ()
+
+
+class CapabilityStatement(BaseModel):
+    """The Module 4 capability matrix, built the same way as the attack one."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entries: tuple[CapabilityEntry, ...]
+
+    @classmethod
+    def build(cls, reported: Iterable[CapabilityEntry]) -> "CapabilityStatement":
+        by_name = {entry.capability: entry for entry in reported}
+        entries: list[CapabilityEntry] = []
+        for name, meta in sorted(ASSURANCE_CAPABILITY_REGISTRY.items()):
+            if name in by_name:
+                entries.append(by_name[name])
+                continue
+            entries.append(
+                CapabilityEntry(
+                    capability=name,
+                    title=str(meta["title"]),
+                    coverage=Coverage.NOT_ASSESSED,
+                    owning_module=int(meta["module"]),
+                    detail=str(meta["description"]),
+                    reason="this run did not exercise the capability",
+                )
+            )
+        return cls(entries=tuple(entries))
+
+
+#: What this BUILD implements, independent of any particular run.
+#:
+#: ``CapabilityStatement.build([])`` answers a different question -- "what did
+#: THIS run exercise" -- and correctly answers NOT_ASSESSED for everything when
+#: nothing ran.  ``cvtrust info`` describes the build, and printing
+#: NOT_ASSESSED there would tell an operator the software cannot do something it
+#: can, which is the same class of dishonesty as the reverse.
+BUILD_CAPABILITY_COVERAGE: dict[str, Coverage] = {
+    "distribution_shift": Coverage.PARTIAL,
+    "operational_drift": Coverage.PARTIAL,
+    "evidence_fusion": Coverage.SUPPORTED,
+    "evidence_dependency": Coverage.PARTIAL,
+    "cross_module_lineage": Coverage.SUPPORTED,
+    "coverage_aware_assurance": Coverage.SUPPORTED,
+    "policy_disposition": Coverage.SUPPORTED,
+    "conflicting_evidence": Coverage.SUPPORTED,
+}
+
+#: Why each of the PARTIAL entries above is not SUPPORTED, printed next to it.
+BUILD_CAPABILITY_BOUND: dict[str, str] = {
+    "distribution_shift": "bounded by the reference population's own integrity, "
+    "which this system does not establish; a shift is never an attack",
+    "operational_drift": "the declared-change-to-feature-view mapping is an "
+    "uncalibrated heuristic, and a declaration is never verified",
+    "evidence_dependency": "independence is decided by a curated table, not "
+    "measured; an unlisted correlation is not detected",
+}
+
+
+def build_capability_statement() -> "CapabilityStatement":
+    """The capability matrix for this BUILD, not for a run."""
+    return CapabilityStatement(
+        entries=tuple(
+            capability_entry(
+                name,
+                BUILD_CAPABILITY_COVERAGE[name],
+                reason=BUILD_CAPABILITY_BOUND.get(name),
+            )
+            for name in sorted(ASSURANCE_CAPABILITY_REGISTRY)
+        )
+    )
+
+
+def capability_entry(
+    capability: str,
+    coverage: Coverage,
+    *,
+    reason: str | None = None,
+    limitations: Iterable[str] = (),
+) -> CapabilityEntry:
+    meta = ASSURANCE_CAPABILITY_REGISTRY[capability]
+    return CapabilityEntry(
+        capability=capability,
+        title=str(meta["title"]),
+        coverage=coverage,
+        owning_module=int(meta["module"]),
+        detail=str(meta["description"]),
+        reason=reason,
+        limitations=tuple(limitations),
+    )

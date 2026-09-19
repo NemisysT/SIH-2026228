@@ -5,10 +5,11 @@ report; this is the complete list.
 
 ## 1. Scope of this build
 
-**Modules 1, 2 and 3 of 5 are implemented.** Distribution-shift
-characterisation and the analyst web UI do not exist yet. They are declared
-`NOT_ASSESSED` in the coverage statement of every report, with the owning module
-named — not silently omitted.
+**Modules 1, 2, 3 and 4 of 5 are implemented.** The analyst web UI (Module 5)
+does not exist yet. It is declared absent in `cvtrust info` and in the
+capability statement of every assurance report — not silently omitted. Module 4
+exposes the report schemas and APIs Module 5 will consume and adds no UI of its
+own.
 
 A clean report is a statement about the attack classes marked `SUPPORTED` or
 `PARTIAL` in `docs/coverage.md`, and about nothing else.
@@ -17,6 +18,12 @@ A clean report is a statement about the attack classes marked `SUPPORTED` or
 positive statement available is `NO_ANOMALY_DETECTED`, which is a statement
 about the tests that ran under the recorded access mode and probe battery, not
 about the model. This is enforced by a test, not by review.
+
+**An assurance decision never states that a pipeline is secure.** `ACCEPT` is a
+statement about the checks that ran in each scope, bounded by that scope's own
+coverage statement, and it requires all four scopes to have been assessed. There
+is no trust score, no risk score and no aggregate number of any kind in the
+report, and there will not be one (ADR-016).
 
 **A provenance report never states that an inference was correct.**
 `PROVENANCE VERIFIED` is a statement about the integrity of the *records* and
@@ -187,6 +194,115 @@ that change what an operator should do:
 - **Chain verification is O(n)** and re-hashes every entry, so an unbounded log
   verifies proportionally more slowly. Anchor and rotate rather than verify less.
 
+## 7b. Distribution-shift and assurance limitations (Module 4)
+
+### The reference population is the single largest assumption
+
+Every shift result is a comparison against a reference, and **nothing in this
+system establishes that the reference is clean.** A contaminated reference makes
+a clean population look shifted and a shifted one look clean, and no amount of
+statistical rigour in the comparison can detect it. What is done instead is to
+make the assumption visible: the reference carries an identity, a content digest
+that binds the feature space it was measured in, an explicit mode
+(`DECLARED_CORPUS` or the weaker `DECLARED_SUBSET`, where the population under
+assessment contributed to its own baseline), a declared provenance, a version,
+and a trust level that **defaults to `UNKNOWN` and is never inferred**. The
+caveat is printed on every assessment.
+
+### A declared context is a claim, never a fact
+
+`declared_sensor = Sensor-A` does not establish what physically produced an
+image. Every explanation carries `declaration_validated: false`, and consistency
+between an observed shift and a declared operational change is reported as
+consistency, **never as confirmation**: a manipulation engineered to move the
+same feature views would be reported identically.
+
+### The context heuristic cannot separate illumination, season and terrain
+
+Measured: all three place ~93% of their displacement in the colour view of the
+classical feature space. A season declaration therefore covers an illumination
+movement, and the system says so rather than pretending otherwise — every
+explanation carries the limitation *"does not identify which declared change
+occurred"*. The declared-change-to-feature-view table is a documented,
+**uncalibrated** heuristic over one feature space, and `operational_drift` is
+`PARTIAL` permanently for that reason.
+
+### A shift is never evidence of manipulation
+
+No rule escalates on shift alone. The strongest statement the distribution scope
+makes is `REVIEW`, reserved for a shift the declared context does not account
+for — which is an open question and is phrased as one. Any `QUARANTINE` in a run
+that also observed a shift came from another scope's own evidence, and the
+report names that scope.
+
+### A genuine dataset attack during a legitimate shift is held at REVIEW
+
+This is an accepted, documented cost, not an oversight. A statistical label
+anomaly measured during a distribution shift is marked **confounded**, because
+the neighbourhood structure the detector relies on has moved, and confounded
+evidence does not count as independent corroboration. `RULE-DATA-004` ensures
+the scope does not vanish entirely — *a confounded finding is not a refuted one*
+— but the disposition is `REVIEW` rather than escalation. The
+`label_anomaly_during_shift` lab scenario exists to keep this honest: 20 of its
+24 evidence items are confounded and it reaches `REVIEW`, by design.
+
+### Confounding changes the explanation, not always the disposition
+
+Measured end to end: 41 Module 1 findings on a legitimately illumination-shifted
+clean corpus reach `REVIEW` whether or not the shift assessment is supplied. The
+shift context changes the governing rule (`RULE-DATA-004` instead of
+`RULE-DATA-002`), marks all 41 items confounded, and takes the independent-
+phenomenon count from 1 to 0 — so those findings can no longer corroborate
+anything. It does **not** lower the disposition. That is deliberate: demoting
+confounded-only dataset evidence to `ACCEPT` would be the more dangerous error,
+because a genuine attack mounted during a shift looks identical. The value
+delivered is a better explanation and a correct corroboration count, not a
+quieter report.
+
+### Independence is curated, not measured
+
+Evidence families and the confounding table are hand-written tables, published
+in every report. Two detectors correlated in a way the tables do not record
+would still be counted as two phenomena. The tables are printed precisely so
+that assumption can be challenged rather than trusted; there is no mechanism
+here that would detect an unlisted correlation.
+
+### Module 4 does not re-verify its inputs
+
+It consumes the reports the other three modules produced and never re-derives a
+digest, re-scores a detector or re-dispositions a finding. A **forged but
+well-formed** upstream report is fused as written. The schema refuses malformed
+or contract-violating findings — a `DETERMINISTIC` finding at confidence 0.4, an
+unknown field, an invented severity — but it cannot detect a plausible lie.
+What it does instead is cite every fused report by id and by content, so an
+edited report stays attributable after the fact.
+
+### Sample sufficiency bounds what can be said, in both directions
+
+Below the floors (20 per side by default; 50 for PSI; 80 reference samples for
+the cross-fitted covariance) a metric reports `INSUFFICIENT_SAMPLE` or
+`NOT_ASSESSED` with the requirement named. **A refusal to answer is not a
+negative answer** and is never reported as stability. The converse is also
+stated: a negative result at 192 samples a side bounds what the test could see,
+and a small but real shift can be below its power.
+
+### One rule is not exercised by the shipped lab
+
+`RULE-SHIFT-050` — per-sample OOD evidence reaching a rule when no
+population-level shift assessment was supplied — is covered by unit and
+adversarial tests but is not reached by any of the nineteen pipeline scenarios,
+because `ood_without_shift_assessment` resolves at the scope level before it. It
+is recorded here rather than left as an implicit gap.
+
+### No operational calibration exists
+
+No shift threshold in this build is calibrated against operational data. The
+permutation nulls are constructed from the data at analysis time, which is why
+there is no table to load — but that also means `alpha = 0.01` is a chosen
+strictness, not a measured error rate. Every number in
+`docs/attack-matrix.md` describes behaviour on a synthetic corpus and is a lower
+bound on evidence quality, not a prediction of field performance.
+
 ## 8. Cryptographic and operational limitations
 
 - **Manifests are still written unsigned.** Module 3 makes signing them possible
@@ -235,6 +351,19 @@ It does not claim that any model is safe. It claims that specified tests ran
 under a recorded access mode against a recorded probe battery, and reports what
 they found — including, in two documented cases, that a published method did not
 work here and was demoted rather than shipped firing incorrectly.
+
+It does not claim that an `ACCEPT` disposition means a pipeline is secure. It
+claims that four named scopes were each assessed by named rules over named
+evidence, that nothing cleared the corroboration floor in any of them, and that
+the coverage statement bounding all four is printed alongside. A scope nobody
+looked at is `NOT_ASSESSED` and outranks `ACCEPT`, so the absence of a report
+can never be read as a clean one.
+
+It does not claim that an observed distribution shift indicates an attack, or
+that an unshifted population is uncompromised. Terrain, season, sensor and
+illumination changes are the normal condition of this problem domain and produce
+the same signature as manipulation; the system reports the movement, reports
+whether a declared operational change accounts for it, and stops there.
 
 It does not claim that a verified provenance chain means an inference was
 trustworthy. It claims that the records were not altered, that they were signed

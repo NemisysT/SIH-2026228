@@ -158,8 +158,12 @@ cv-trust/
 ├── tests/            unit · integration · adversarial · regression
 ├── docs/             architecture, threat model, research, coverage, ...
 ├── configs/          default.yaml
-├── scripts/          setup.sh · demo.sh · evaluate.sh
-├── attack_lab/       generated corpora and scenarios (not in version control)
+├── scripts/          setup.sh · demo.sh · evaluate.sh · model-evaluate.sh
+│                     · provenance-evaluate.sh · assurance-evaluate.sh
+├── attack_lab/       generated dataset corpora and scenarios (not in VCS)
+├── model_lab/        generated model artifacts and scenarios (not in VCS)
+├── provenance_lab/   generated logs, keys and trust stores (not in VCS)
+├── assurance_lab/    generated population pairs (not in VCS)
 └── reports/          generated reports (not in version control)
 ```
 
@@ -349,3 +353,110 @@ log and 38 MB of replay database per day.
 Chain verification is O(n) and re-hashes every entry — 200 entries in ~11 ms —
 so a log that grows without bound verifies proportionally more slowly. Anchor
 and rotate logs rather than verifying less.
+
+---
+
+## Module 4 — distribution shift and assurance in an air-gapped deployment
+
+### What you need before it is useful
+
+| Input | Where it comes from | If you do not have it |
+|---|---|---|
+| A **reference population** | A corpus you have declared as your baseline, held on disk | The distribution scope is `NOT_ASSESSED`. Never "stable" |
+| A Module 1 report | `cvtrust dataset scan --out` | Dataset scope `NOT_ASSESSED` |
+| A Module 2 report | `cvtrust model assess --out` | Model scope `NOT_ASSESSED` |
+| A Module 3 report | `cvtrust provenance verify-log --out` | Provenance scope `NOT_ASSESSED` |
+
+All four are optional, and that is the design — but note what it costs:
+**`ACCEPT` requires all four scopes to have been assessed.** A run with three
+green scopes and one missing report is `NOT_ASSESSED`, by rule, so that
+withholding a report can never be read as a clean result.
+
+### Everyday use
+
+```bash
+# 1. Characterise the operating batch against your declared baseline.
+#    --declare is a CLAIM about collection conditions. It is recorded, checked
+#    against where the movement actually landed, and never validated.
+cvtrust assurance shift /data/current \
+    --reference /data/baseline \
+    --reference-declare "season=summer,terrain=mixed,sensor=sensor_a,illumination=daylight" \
+    --declare "season=winter,illumination=low" \
+    --reference-provenance "2025 baseline collection, hand-carried from the collection cell" \
+    --reference-trust ASSERTED_BY_OPERATOR \
+    --out reports/shift.json
+
+# 2. Fuse everything you have.
+cvtrust assurance assess \
+    --dataset-report reports/dataset.json \
+    --model-report reports/model.json \
+    --provenance-report reports/provenance.json \
+    --shift reports/shift.json \
+    --out reports/assurance.json \
+    --markdown-out reports/assurance.md
+```
+
+Exit codes: `0` accept · `1` review · `2` not assessed or explained error ·
+`3` quarantine.
+
+### Choosing a reference population
+
+This is the single most consequential deployment decision in Module 4, because
+**nothing in this system establishes that a reference is clean.** A contaminated
+reference makes a clean population look shifted and a shifted one look clean.
+
+- Prefer a **separately declared corpus** (`--reference <root>`) over a subset of
+  the population under assessment. The second form is supported, because an
+  analyst with one delivery who wants to know whether its second half looks like
+  its first has a real question — but it is recorded as `DECLARED_SUBSET` and the
+  population contributed to its own baseline.
+- Record where it came from in `--reference-provenance`. It is carried verbatim
+  into every report and is never validated.
+- `--reference-trust` defaults to `UNKNOWN` and is **never inferred**. Set it to
+  `ASSERTED_BY_OPERATOR` or `ASSESSED_CLEAN` only when you can say what that
+  assertion rests on; the value appears in the report next to the caveat.
+- Re-baseline deliberately, not reflexively. Adopting the current population as
+  the new reference after every shift means the system can never detect a slow
+  drift, because the baseline follows it.
+
+### Sizing
+
+| Floor | Default | Why |
+|---|---:|---|
+| Reference samples | 20 | Below this no metric will answer |
+| Current samples | 20 | Separate from the reference floor: a large reference and a tiny current batch keeps the test valid while destroying its power, so a negative result would be read as reassurance it cannot support |
+| PSI | 50 per side | 10 bins × 5 samples |
+| Cross-fitted covariance | 80 reference | The basis is fitted on one half and evaluated on the other |
+| Energy-test cap | 400 per side | The statistic is quadratic; subsampling is deterministic from the run seed and both counts are reported |
+
+Practical guidance: **at least 100 samples a side**, preferably more. Below the
+floors you get `INSUFFICIENT_SAMPLE`, which is a refusal to answer and is never
+reported as stability.
+
+### Cost
+
+240 samples a side: ~2 s feature extraction plus ~3.2 s for all five metrics and
+their permutation nulls. 480 a side: ~4 s plus ~4.6 s — sub-linear, because the
+energy test subsamples. Fusion is free by comparison: policy evaluation over 23
+rules takes 0.18 ms and does not depend on population size, and 10,000 fused
+findings cost ~150 ms end to end. Peak RSS ~500 MB, dominated by the feature
+matrices.
+
+### One deployment decision to make deliberately
+
+`assurance.corroboration_min_confidence` and
+`assurance.corroboration_min_severity` set the floor below which statistical
+evidence is recorded but does not drive a disposition. Raising them makes a
+noisier pipeline quieter — and **they do not apply to `DETERMINISTIC` evidence**,
+so no setting of them can silence a failed signature check or a broken hash
+chain. That is deliberate: a noise-suppression knob must not be a switch for
+turning off the cryptography. Both values are in the configuration hash and are
+printed in every report, so a relaxed run is identifiable as one.
+
+### No calibration table, and nothing to fetch
+
+Every null in Module 4 is a permutation null constructed from your own data at
+analysis time. There is no table to load and nothing to download — but that also
+means `alpha` is a chosen strictness, not a measured operational error rate. No
+shift threshold in this build is calibrated against operational data, and the
+report says so.

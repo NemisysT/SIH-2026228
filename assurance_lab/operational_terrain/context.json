@@ -1,0 +1,18 @@
+{
+  "current": {
+    "acquisition_mode": "day",
+    "illumination": "daylight",
+    "season": "summer",
+    "sensor": "sensor_a",
+    "source": "lab declaration for the current population",
+    "terrain": "desert"
+  },
+  "reference": {
+    "acquisition_mode": "day",
+    "illumination": "daylight",
+    "season": "summer",
+    "sensor": "sensor_a",
+    "source": "lab baseline declaration; synthetic, and a claim like any other",
+    "terrain": "mixed"
+  }
+}

@@ -523,6 +523,274 @@ visible.
 
 ---
 
+## Method cards — Module 4 (distribution shift and evidence fusion)
+
+Module 4 asks a different question from the first three. Modules 1–3 ask *is
+this artifact what it claims to be*; Module 4 asks *has the operating population
+moved, and what does the accumulated evidence permit us to say*. The first half
+is a two-sample testing problem. The second half is not a statistics problem at
+all — see the fusion card at the end, which is the most important one here.
+
+**The selection principle was deliberately restrictive.** Five methods are
+implemented, not fifteen. A long list of shift detectors would inflate the
+apparent capability while making the multiple-comparison problem worse and the
+report harder to read. One omnibus test decides whether there is a shift;
+everything else is *supporting detail* that localises it and is never decisive
+on its own.
+
+### 24. Energy distance, two-sample, with a permutation null — **the omnibus test**
+
+- **Purpose.** Decide whether the current population is drawn from the same
+  distribution as the reference, over the whole 614-dimensional feature space.
+- **Source.** Székely & Rizzo, *Testing for equal distributions in high
+  dimension* (2004); Sejdinovic, Sriperumbudur, Gretton & Fukumizu (Annals of
+  Statistics, 2013) establish that the energy-distance family and the MMD family
+  are equivalent up to the choice of kernel.
+- **Input assumptions.** Finite second moments; exchangeability under the null.
+  No distributional form, no independence between coordinates, no Gaussianity.
+- **Reference requirements.** A reference population whose identity, digest and
+  declared provenance are recorded. **Not assumed to be uncontaminated** — see
+  the reference-contamination note below.
+- **Sample-size requirements.** 20 per side (configurable floor). Below that the
+  metric reports `INSUFFICIENT_SAMPLE` and contributes nothing. The statistic is
+  quadratic in sample count, so points are deterministically subsampled to 400
+  per side; both the number used and the number available are reported, so a
+  capped run cannot be read as a full one.
+- **Strengths.** Parameter-free — this is why it was chosen over MMD, which is
+  mathematically equivalent but carries a bandwidth knob that would have to be
+  set, justified, and defended, and which silently determines what "different"
+  means. Consistent against **all** alternatives, not only mean shifts. The
+  permutation null is exact under exchangeability, so the p-value does not rest
+  on an asymptotic approximation at n=120.
+- **Weaknesses.** Quadratic cost. Low power against a shift confined to a few of
+  614 coordinates — which is exactly why the marginal test exists alongside it.
+  The p-value floor is 1/(B+1) and is reported next to every p-value so a floor
+  is never mistaken for certainty.
+- **Failure modes.** A contaminated reference makes a clean population look
+  shifted and a shifted one look clean, and nothing in the statistic can detect
+  this. Both populations drawn from a *mixture* that has changed proportions
+  register as a shift, correctly, but the test says nothing about which
+  component moved.
+- **Calibration.** None required and none invented: the null is constructed from
+  the data at analysis time by permutation. `alpha = 0.01`, deliberately strict,
+  because the operational cost of a false shift alarm is an analyst
+  investigating a legitimate seasonal change.
+- **Interpretation.** A significant result means *these two populations differ
+  more than random relabelling of the same points would produce*. It is not a
+  statement about cause, and never a statement about attack.
+- **Implementation decision.** **Implemented and decisive.** It is the only
+  metric whose result determines the shift verdict.
+
+### 25. Per-block mean displacement — **localisation, not detection**
+
+- **Purpose.** Say *where* in the feature space a movement occurred, using the
+  five measured spans of the classical extractor (structure 0–256, colour
+  256–384, gradient 384–528, DCT 528–591, acquisition 591–614).
+- **Input assumptions.** Only that the blocks are meaningful, which they are by
+  construction (ADR-005).
+- **Sample-size requirements.** Inherits the omnibus floors.
+- **Strengths.** Directly interpretable, and it is what makes the declared-context
+  explanation possible at all: "the movement is 93% in the colour view" is a
+  sentence an analyst can check against "we moved to a night collection".
+- **Weaknesses.** Squared-displacement *shares* only, with **no significance
+  test of its own** — `significant` is explicitly `None`. Shares sum to one, so
+  a tiny overall movement and an enormous one are described identically.
+- **Failure modes.** Illumination, season and terrain changes all place ~93% of
+  their displacement in the colour view, so this measurement **cannot
+  distinguish between them**. That limitation is printed on every explanation
+  and is the reason a season declaration is accepted as covering an illumination
+  movement (see the measured corrections below).
+- **Calibration.** None; it is descriptive.
+- **Interpretation.** A share, not a score. It never fires a rule.
+- **Implementation decision.** **Implemented, explicitly non-decisive.**
+
+  *A standardised variant was implemented, measured and discarded.* Dividing
+  displacement by the per-coordinate reference standard deviation gave
+  `colour = 1.000` on **every** pair including the clean baseline: the
+  near-zero-variance HSV bins explode under standardisation. Raw squared-
+  displacement shares were kept, and the failed attempt is recorded here rather
+  than deleted.
+
+### 26. Covariance comparison by cross-fitted log-determinant ratio
+
+- **Purpose.** Detect a change in *spread or correlation structure* that leaves
+  the mean where it was — a population that has become more or less diverse.
+- **Source.** The generalised-variance ratio is classical; the cross-fitting is
+  the same device Module 1 uses for its quantile thresholds (method card §10).
+- **Input assumptions.** A non-singular covariance in the projected subspace.
+- **Reference requirements.** At least `2 × components × samples_per_component`
+  reference samples — 80 at the defaults — because the basis is fitted on one
+  half and evaluated on the other.
+- **Sample-size requirements.** A 614×614 covariance from a few hundred samples
+  is singular and its determinant is not evidence, so the comparison is made in
+  the top 8 principal directions only, with 5 samples required per direction.
+- **Strengths.** Catches the case the mean test misses entirely. Cross-fitting
+  removes the bias that made the in-sample version unusable.
+- **Weaknesses.** Only 8 directions, chosen by reference variance; a spread
+  change orthogonal to them is invisible. The log-determinant is a single
+  summary of a matrix and discards which direction moved.
+- **Failure modes.** **The measured one:** an in-sample PCA basis made every
+  current population look contracted — log-det ratio **−2.35 on two independent
+  clean draws**, a guaranteed false positive. Cross-fitting moved the same
+  comparison to **+0.56**.
+- **Calibration.** The original fixed threshold (`log_det_threshold = 0.5`) was
+  **removed from the configuration entirely** and replaced by a permutation null
+  over the pooled projected points. A fixed threshold on a quantity whose null
+  distribution depends on dimension and sample size is folklore, not calibration.
+- **Interpretation.** Supporting detail. A significant result strengthens a
+  shift the omnibus test already found; it cannot produce one alone.
+- **Implementation decision.** **Implemented as supporting evidence.**
+
+### 27. Population Stability Index with a permutation null and BH correction
+
+- **Purpose.** Per-quantity marginal shift on the 23 named acquisition
+  statistics, which are the ones an analyst can reason about physically
+  (exposure, saturation, edge density, block artifacts, …).
+- **Source.** PSI is standard credit-risk practice; the 0.10/0.25 bands are
+  industry folklore with no published derivation.
+- **Input assumptions.** Reference-quantile binning with a continuity floor of
+  `1/(2n)` so an empty bin does not produce an infinite index.
+- **Sample-size requirements.** 10 bins with ≥5 samples each, so ≥50 per side.
+- **Strengths.** Names the physical quantity that moved, which is what makes a
+  shift actionable rather than merely detected.
+- **Weaknesses.** 23 simultaneous tests. Marginal only — it cannot see a change
+  in the joint structure that leaves every margin intact.
+- **Failure modes.** **Two measured, both fixed:**
+  1. The conventional 0.25 band fired at **0.37 on a clean pair**. Measured
+     against a clean reference split in half, max-PSI across the 23 quantities
+     had **mean 0.49 and p95 0.65** — the band is roughly twice as strict as the
+     null warrants at this sample size. The band was demoted from a decision
+     rule to a **reporting label**, documented in the report as unvalidated, and
+     the configuration key was renamed `psi_reporting_band` to make its status
+     unmistakable.
+  2. After switching to a permutation null with Benjamini–Hochberg correction,
+     significance became **unreachable by construction**: at B=199 with m=23
+     quantities the smallest achievable BH-adjusted q is 0.115, so `alpha=0.01`
+     could never be met. Measured on a quantity displaced 4 standard deviations
+     with PSI 5.31 and reported *not significant*. Fixed by auto-scaling the
+     budget to `ceil(m/alpha) − 1` = 2299 permutations, capped at 4999; when the
+     cap binds, the metric reports
+     `significance_resolvable_after_correction: false` and states that
+     significance **could not be resolved**, which is explicitly *not* a finding
+     of stability.
+- **Calibration.** Permutation null per quantity, BH across quantities. No
+  operational calibration exists and none is claimed.
+- **Interpretation.** Supporting detail that names quantities.
+- **Implementation decision.** **Implemented as supporting evidence, with its
+  conventional threshold demoted to a label after measurement.**
+
+### 28. Jensen–Shannon divergence for class-mix and metadata comparison
+
+- **Purpose.** Compare categorical distributions — class labels, declared
+  contributor, declared batch, declared source — between the two populations.
+- **Source.** Lin (IEEE Trans. Inf. Theory, 1991). Already used in Module 2 for
+  behavioural comparison (method card §16), so the interpretation is shared
+  across modules rather than invented twice.
+- **Input assumptions.** Both sides have at least a minimum count per side.
+- **Strengths.** Symmetric, bounded in [0, 1] bit, and **finite on disjoint
+  support** — which is exactly why it was chosen over KL divergence, whose
+  infinity on a newly introduced class would be an unusable number in a report.
+- **Weaknesses.** A bounded divergence compresses large differences; a
+  permutation test of homogeneity is run alongside it so the decision does not
+  rest on the magnitude alone.
+- **Failure modes.** Declared metadata is a **claim by the supplying side**.
+  `declared_sensor = Sensor-A` does not establish what physically produced an
+  image, and a shift in declared contributor is evidence about the declaration,
+  not about the imagery.
+- **Calibration.** Permutation null.
+- **Interpretation.** Supporting detail. A change in who supplied the data is a
+  genuine operational signal and is reported as such — not as evidence of
+  manipulation.
+- **Implementation decision.** **Implemented as supporting evidence.**
+
+### 29. Explicit rule-based evidence fusion — **why there is no score**
+
+This is a design card rather than a method card, because the decision was to
+*not* adopt a method.
+
+- **The problem.** Four scopes (dataset, model, provenance, distribution), each
+  producing findings with a severity, a confidence and one of four confidence
+  bases. Produce one disposition.
+- **The obvious solution, rejected.** Weight each scope, sum, threshold. A
+  calibrated probabilistic model would be the defensible version of this, and
+  building one honestly requires (a) a prior over attack-class incidence in
+  multi-contributor pipelines, (b) per-detector error rates measured on
+  operational data, and (c) an independence structure. **None of the three
+  exists here**, and the project's own method cards say so: §14 and §15 record
+  two Module 2 detectors measured non-discriminating, and the
+  `HEURISTIC_UNCALIBRATED` basis exists precisely because several detectors have
+  no measured error rate at all. Weights chosen without those three inputs are
+  numbers picked to make a demo look right, stated with a precision they do not
+  have — and, worse, they are unarguable: an analyst who disagrees with
+  `trust = 0.62` has nothing to point at.
+- **What was implemented instead.** 23 explicit rules, each with an id, scope,
+  conditions, required evidence, exclusions, disposition and rationale, printed
+  in full in every report. Four scope dispositions, kept separate. The overall
+  disposition is the **strictest** across scopes with the scope named — never a
+  mean, because one confident `QUARANTINE` among three quiet scopes is exactly
+  the case a mean would bury.
+- **The one aggregation performed, and how it is bounded.** Corroboration.
+  Attack classes map to **evidence families**, and a family contributes at most
+  **one unit of independent support** no matter how many findings or detectors
+  it contains — measured directly: five distinct duplicate detectors firing on
+  one cluster yield `corroboration = 5` distinct detectors and
+  `independent_family_count = 1` phenomenon. A second table records the single
+  confounding relationship the project can justify (`DATASET_LABELLING` ←
+  `DISTRIBUTION_SHIFT`); every other entry is empty on purpose.
+- **Sample-size / data sensitivity.** None — the rules are deterministic
+  functions of the evidence. This is a genuine advantage over a calibrated
+  model, which would need its calibration re-established for every deployment.
+- **Operational interpretation.** An analyst can name the rule that produced a
+  disposition and disagree with it by id. A reviewer can diff the table between
+  policy versions. The policy version is bound into the decision, the run
+  context and the report digest.
+- **Failure cases, stated plainly.** The table is coarser than a calibrated
+  model would be. It cannot express "three weak signals from unrelated families
+  together warrant escalation", because quantifying "together" is precisely the
+  part that needs the missing independence structure. A genuine dataset attack
+  that coincides with a legitimate distribution shift is held at `REVIEW` rather
+  than escalated, because the confounding table cannot separate them — an
+  accepted, documented cost, not an oversight.
+- **Implementation limitation.** Independence is decided by a **curated table,
+  not measured from data**. Two detectors correlated in a way the table does not
+  record would still be counted as two phenomena. The table is printed in every
+  report so that assumption can be challenged rather than trusted.
+
+### The reference population is not ground truth
+
+Every one of the five metrics above compares against a reference, and **nothing
+in this system establishes that the reference is clean.** A contaminated
+reference makes a clean population look shifted and a shifted one look clean,
+and no amount of statistical rigour in the comparison can detect it.
+
+What is done instead: the reference carries an identity (`REF-…`), a content
+digest that **binds the feature space** — so the same images under a different
+extractor are a different reference, and two incomparable runs cannot be
+diffed — an explicit `mode` (`DECLARED_CORPUS`, the strong form, or
+`DECLARED_SUBSET`, where the population under assessment contributed to its own
+baseline), a declared provenance, a version, and a trust level that **defaults
+to `UNKNOWN` and is never inferred**. The caveat is printed on every assessment.
+
+---
+
+## Module 4 — considered and rejected
+
+| Method | Why not |
+|---|---|
+| **Maximum Mean Discrepancy with an RBF kernel** | Mathematically equivalent to energy distance for the corresponding kernel (Sejdinovic et al. 2013), but carries a bandwidth parameter that silently determines what "different" means. The median heuristic is a convention, not a derivation. Energy distance gives the same test with nothing to tune and nothing to defend. |
+| **Kolmogorov–Smirnov per coordinate** | 614 simultaneous univariate tests, all of them blind to joint structure, in exchange for a multiple-comparison problem an order of magnitude worse than PSI's 23. The marginal question is already answered on the 23 *physically interpretable* acquisition statistics, where a result is actionable. |
+| **Wasserstein / earth-mover distance** | Attractive and interpretable in one dimension; in 614 dimensions it needs either an optimal-transport solve per permutation (prohibitive inside a 999-draw null) or a sliced approximation that reintroduces a projection parameter to justify. |
+| **A learned drift detector** (autoencoder residual, domain classifier) | A neural network that predicts whether a population has drifted, whose own provenance would then need assuring — circular, exactly as MNTD is for Module 2. It would also be uninterpretable in the one place interpretation matters most: distinguishing operational drift from manipulation. |
+| **Kullback–Leibler divergence for class mix** | Infinite on disjoint support. A newly introduced class is the *normal* case in an operational pipeline, and a report field that reads `inf` is not a report field. |
+| **Fixed PSI bands (0.10 / 0.25) as a decision rule** | Measured false-positive on a clean pair at 0.37, with a measured null whose p95 is 0.65. Retained as a label, demoted from a decision. |
+| **A universal trust score `0–100`** | ADR-016. See method card §29. |
+| **Weighted scoring across modules** (`model 40% + dataset 30% + …`) | ADR-016. The weights would be unjustifiable, unarguable and load-bearing. |
+| **Treating unexplained shift as evidence of attack** | ADR-018. Terrain, season, sensor and illumination changes are the normal condition of this problem domain and produce the same signature. The strongest statement the distribution scope makes is `REVIEW`. |
+| **Treating a declared context as validated** | A declaration is a claim by the supplying side. Every explanation carries `declaration_validated: false`, and consistency between an observed shift and a declared change is reported as consistency, never as confirmation. |
+| **A "population health" or "drift score" field in the report** | The same failure as a trust score, one scope down. The report carries verdicts from a closed vocabulary and per-metric statistics with their p-values, and no summary number. |
+
+---
+
 ## Module 3 — considered and rejected
 
 | Method | Why not |
@@ -616,6 +884,66 @@ assumed.
     a SHA-256 prefix exceeded IEEE-754 exact range and were rejected by
     `canonical_json` when fed back into another digest — Module 1's ADR-004
     guard catching a Module 2 defect at the boundary, which is what it is for.
+12. **A covariance comparison fitted in-sample was a guaranteed false
+    positive.** The PCA basis fitted on the reference made every current
+    population look contracted: log-determinant ratio **−2.35 on two
+    independent clean draws**. Cross-fitting — fit the basis on one half of the
+    reference, compare the held-out half against the current population — moved
+    the same comparison to **+0.56**. The fixed threshold was then deleted from
+    the configuration and replaced by a permutation null. §26.
+13. **The conventional PSI band fired on clean data.** Max-PSI across the 23
+    acquisition statistics reached **0.37** on a clean pair, against an industry
+    band of 0.25. The null, measured by splitting a clean 144-sample reference
+    in half, had **mean 0.49 and p95 0.65**. The band was demoted to a reporting
+    label and the config key renamed `psi_reporting_band`. §27.
+14. **PSI significance was then unreachable by construction.** With 199
+    permutations and 23 quantities, the smallest achievable Benjamini–Hochberg
+    q is 0.115 — so `alpha = 0.01` could never be met. Measured on a quantity
+    displaced 4 SD with PSI 5.31, reported *not significant*. Fixed by
+    auto-scaling the budget to `ceil(m/alpha) − 1` (2299 at the defaults), and
+    by reporting `significance_resolvable_after_correction: false` when the cap
+    binds — which is stated as "could NOT be resolved", never as stability. §27.
+15. **Standardised block attribution was discarded after measurement.**
+    Dividing displacement by per-coordinate reference SD gave `colour = 1.000`
+    on every pair *including the clean baseline*, because near-zero-variance HSV
+    bins explode under standardisation. Raw squared-displacement shares kept.
+    §25.
+16. **The `sensor` context table was wrong, and a legitimate platform swap paid
+    for it.** 81% of the sensor transform's displacement landed in the
+    `gradient` view, which the table did not predict, so a declared, legitimate
+    sensor change read as `SHIFT_PARTIALLY_EXPLAINED`. `gradient` was added to
+    the table with the measurement recorded next to it: softer optics *is* an
+    edge-statistics change.
+17. **A six-sample batch was reported `NOT_ASSESSED` instead of
+    `INSUFFICIENT_SAMPLE`.** The verdict resolver checked "no metric was
+    assessed" before the sufficiency branch, so a refusal-for-lack-of-data was
+    reported as a refusal-for-lack-of-a-detector. The two have different
+    remedies. Reordered, with the lab pair that caught it named in the comment.
+18. **A scope could vanish from the report entirely.** When every dataset
+    finding was confounded by a coincident shift, `RULE-DATA-002` (needs
+    unconfounded evidence) and `RULE-DATA-010` (needs no evidence) both declined
+    to fire, and the dataset scope disappeared — reading as "nothing to say
+    about the dataset" when the truth was "there is a finding and it cannot be
+    separated from the shift". `RULE-DATA-004` was added: **a confounded finding
+    is not a refuted one.**
+19. **Per-sample OOD evidence reached no rule at all** when no population-level
+    shift assessment was supplied. `RULE-SHIFT-050` was added to catch it, and
+    is silenced when a shift assessment exists so the same phenomenon is not
+    counted twice.
+20. **Three lab expectations were wrong and the engine was right.** A
+    `misdeclared_illumination` scenario expected `PARTIALLY_EXPLAINED`, but
+    illumination, season and terrain all place ~93% of their displacement in the
+    colour view, so a season declaration genuinely does cover an illumination
+    movement. The scenario was renamed `misdeclared_illumination_as_season` and
+    kept as the **explicit negative control** for the explanation mechanism,
+    with `misdeclared_sensor_as_illumination` added to show the check has teeth.
+    Similarly, a `dataset_only` scenario expected `ACCEPT` and received
+    `NOT_ASSESSED` — correct, because three scopes had no input; the property
+    was made explicit in `overall()` and published as
+    `accept_requires_full_coverage`. And the clean model baseline was
+    `clean_retrain_0`, which is an *independently retrained* model and therefore
+    genuinely mismatches the reference; it was replaced by a self-comparison.
+
 
 ---
 

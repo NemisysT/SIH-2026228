@@ -32,7 +32,7 @@ by `cvtrust info` — is what makes the difference visible.
 | `record_reordering` | `NOT_ASSESSED` | 3 | — | Same. |
 | `provenance_key_trust` | `NOT_ASSESSED` | 3 | — | Same. |
 | `chain_truncation` | `NOT_ASSESSED` | 3 | — | Same. |
-| `distribution_shift` | `NOT_ASSESSED` | 4 | — | Population-level shift and the drift-vs-manipulation distinction. Module 1 scores individual samples only. |
+| `distribution_shift` | `NOT_ASSESSED` | 4 | — | Owned by Module 4 and assessed by `cvtrust assurance shift`, not by a dataset scan. Module 1 scores individual samples only; the two are deliberately kept separate. |
 
 ## Module 2 — model forensics and backdoor assurance
 
@@ -153,6 +153,63 @@ No calibration table exists for Module 3 and none will. Every finding is
 `DETERMINISTIC` at confidence 1.0, and calibrating an equality test would
 produce a number pretending to be a measurement.
 
+## Module 4 — distribution shift and evidence fusion
+
+Module 4 adds one attack class and seven **capabilities**. The distinction
+matters: an attack class is something an adversary might do; a capability is
+something the assurance engine does with evidence. Both are in the
+machine-readable `coverage` and `capabilities` sections of every assurance
+report, and both are printed by `cvtrust info`.
+
+### Attack class
+
+| Attack class | Coverage | Assessed by | Notes |
+|---|---|---|---|
+| `distribution_shift` | **PARTIAL** | `cvtrust assurance shift` | Permutation energy test over the joint 614-d feature distribution, with movement attributed to feature views and checked against the declared operational context. `PARTIAL` at best, permanently, for two independent reasons: the result is bounded by the reference population's own integrity, **which this system does not establish**, and a shift is never equated with an attack. Without a reference the outcome is `NOT_ASSESSED` — never "stable". |
+
+`distribution_shift` degrades further, and the vocabulary distinguishes the
+reasons:
+
+| Situation | Reported as |
+|---|---|
+| Both populations above the sample floors, metrics ran | `ASSESSED` |
+| Either side below its floor (default 20) | `INSUFFICIENT_SAMPLE` — a refusal to answer, not a negative answer |
+| A metric's own precondition unmet (e.g. <80 reference samples for the cross-fitted covariance) | `NOT_ASSESSED`, with the requirement named |
+| No reference population supplied at all | The scope is `NOT_ASSESSED` and is listed in the decision's unassessed areas |
+
+### Capability matrix
+
+| Capability | Status | What it means | Why it is not stronger |
+|---|---|---|---|
+| `distribution_shift` | **PARTIAL** when a reference was supplied and the floors were met; `NOT_ASSESSED` otherwise | Population-level two-sample testing with a permutation null, five metrics, explicit sample sufficiency, and a reference identity bound to the feature space. | Bounded by the reference population's own integrity, which this system does not establish; and a shift is never equated with an attack. Listed as both an attack class and a capability so a reader auditing the capability list does not have to know to look in a second table. |
+| `operational_drift` | **PARTIAL** | Whether an observed shift is accounted for by a declared operational change (season, terrain, sensor, illumination, acquisition mode). | **Permanently PARTIAL.** The mapping from a declared change to the feature views it would move is a documented, uncalibrated heuristic over one feature space; and a declaration is a claim by the supplying side that nothing here verifies. Illumination, season and terrain are *not separable* by this measurement — all three place ~93% of their displacement in the colour view. |
+| `evidence_fusion` | **SUPPORTED** | Findings from Modules 1–4 normalised into one evidence model and combined by an explicit, versioned 23-rule table. | No score, no weights, no arithmetic across evidence classes — by design (ADR-016), not by omission. |
+| `evidence_dependency` | **PARTIAL** | Evidence grouped into phenomenon families; a family contributes at most one unit of independent support however many findings or detectors it contains. Confounded evidence stops counting as corroboration. | Independence is decided by a **curated table, not measured**. Two detectors correlated in a way the table does not record would still count as two phenomena. The table is printed in every report so the assumption is challengeable. |
+| `cross_module_lineage` | **SUPPORTED** | Every disposition names the rules that produced it; every rule names the findings that made it fire, back to the module, detector and version. | — |
+| `coverage_aware_assurance` | **SUPPORTED** | A scope with no input is `NOT_ASSESSED`, never `ACCEPT`; unassessed areas are carried in the decision, at scope and attack-class granularity, each with a remedy. | — |
+| `policy_disposition` | **SUPPORTED** | The rule table is data, emitted verbatim into every report, and reproducible from (inputs, policy version, configuration, seed, software version). | — |
+| `conflicting_evidence` | **SUPPORTED** | Disagreement between evidence classes is recorded as a factual statement and never resolved into one narrative. | The recording rule carries `ACCEPT` deliberately, so noting a conflict can neither raise nor lower an outcome. |
+
+### What Module 4 explicitly does **not** do
+
+| | Why |
+|---|---|
+| Re-verify upstream reports | It consumes the reports the other three modules produced and never re-derives a digest, re-scores a detector or re-dispositions a finding. A mismatch between what Module 2 reported and what Module 4 said Module 2 reported would be undetectable and fatal, so there is no code path that could produce one. A **forged but well-formed** upstream report is therefore fused as written — and cited by id and content so it stays attributable. |
+| Establish that the reference population is clean | Nothing in this system does. A contaminated reference makes a clean population look shifted and a shifted one look clean. The reference's trust level defaults to `UNKNOWN` and is never inferred. |
+| Validate a declared operational context | `declaration_validated: false` on every explanation. Consistency is reported as consistency, never as confirmation. |
+| Escalate on distribution shift | No rule does. The strongest statement the distribution scope makes is `REVIEW` (ADR-018). |
+| Produce any aggregate number | No trust score, no risk score, no "overall confidence". Asserted by tests that walk the AST for arithmetic on score-like names and that scan every report schema's fields (ADR-016). |
+| Separate a genuine dataset attack from a coincident legitimate shift | The confounding table cannot. Such a case is held at `REVIEW` rather than escalated. **An accepted, documented cost.** |
+
+### Dispositions and what they mean here
+
+| Disposition | Meaning in an assurance decision |
+|---|---|
+| `ACCEPT` | Every scope was assessed and none produced evidence clearing the corroboration floor. A statement about **the checks that ran**, bounded by the coverage statement. Never a statement that anything is safe, authentic or uncompromised. |
+| `REVIEW` | Something was observed that an analyst should look at: an uncorroborated statistical finding, an unexplained shift, a confounded finding that cannot be separated from a coincident phenomenon, or a severe finding from an uncalibrated detector. |
+| `NOT_ASSESSED` | At least one scope had no input. **Outranks `ACCEPT`** — three clean scopes do not average away the fourth's absence — and is outranked by `REVIEW` and `QUARANTINE`, so a gap never softens a real failure. |
+| `QUARANTINE` | A deterministic integrity failure, or corroborated evidence across independent families. Reserved; no statistical detector reaches it alone, and no shift verdict reaches it at all. |
+
 ## Confidence basis coverage
 
 Which detectors can produce which quality of confidence, in this build:
@@ -174,6 +231,9 @@ Which detectors can produce which quality of confidence, in this build:
 | `model_activation` | `DETERMINISTIC` (1.0, INFO severity — context, not detection) | same |
 | `model_trigger` | `HEURISTIC_UNCALIBRATED` (≤0.60) | `CALIBRATED` |
 | `provenance_verifier` | `DETERMINISTIC` (1.0) | `DETERMINISTIC` (1.0) — there is no table, and there is nothing to calibrate |
+| `distribution_shift` (unresolved / no context) | `DETERMINISTIC` (1.0, INFO severity — the observation is a fact, its meaning is not) | same |
+| `distribution_shift` (graded) | `STATISTICAL` (1 − p from the permutation null, ≤0.99) | same — the null is constructed at analysis time, so there is no table to load |
+| `assurance_policy` | Emits no findings of its own | — |
 
 **Consequence to be aware of:** with no calibration table loaded, no
 threshold-based finding can recommend `QUARANTINE` — policy rule

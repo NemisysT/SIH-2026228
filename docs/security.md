@@ -236,3 +236,74 @@ an unprivileged user in a container or VM with no network.
 - **An uninterpretable statistic is not reported as a verdict.** Neural
   Cleanse's anomaly index below eight classes, and the activation analyses
   throughout, report evidence without thresholding it.
+
+---
+
+## Module 4 — assurance security policy
+
+### Input handling
+
+Module 4's inputs are **JSON reports produced elsewhere**, in a pipeline whose
+contributors are untrusted. They are treated as untrusted files, not as trusted
+internal state.
+
+- **Every finding is re-validated** against the frozen `Finding` schema at load.
+  `extra="forbid"` plus the confidence contract means a smuggled `trust_score`
+  field, an invented severity, a fifth confidence basis, an out-of-range
+  confidence, a `DETERMINISTIC` finding at 0.4, or an uncalibrated finding above
+  the 0.6 cap are all refused **loudly**, naming the index and the violation —
+  never fused silently.
+- **The declared module is checked against the argument slot.** A provenance
+  report handed to `--dataset-report` is refused, because a scope silently
+  assessed by the wrong evidence is the worst available outcome.
+- **A malformed file is an error, not an empty result.** A missing `findings`
+  array, a non-array `findings`, a JSON scalar and unparseable JSON all raise
+  rather than degrading to "nothing found".
+
+### What the schema cannot stop, and what is done instead
+
+Deleting a well-formed finding produces a well-formed report. Module 4 fuses
+what it is given and does not re-verify its inputs — deliberately, since
+re-deriving a digest here could disagree with Module 2's and the disagreement
+would be undetectable and fatal. Every fused report is therefore **cited by id
+and by content**, so an edited report stays attributable after the fact.
+Detecting the edit is the job of a signature over the report, not of the fusion
+engine, and the limitation is printed rather than papered over.
+
+### Conservative-by-default decisions, Module 4
+
+- **A missing input is `NOT_ASSESSED`, which outranks `ACCEPT`.** Withholding a
+  report is the cheapest attack in a multi-contributor pipeline, and the
+  disposition vocabulary is the defence: an overall `ACCEPT` requires all four
+  scopes to have been assessed.
+- **The corroboration floors do not apply to `DETERMINISTIC` evidence.** An
+  operator raising `corroboration_min_confidence` is suppressing weak
+  statistical evidence; if that also silenced a failed signature check, the knob
+  would be a switch for turning off the cryptography. Asserted by a test at
+  confidence 0.99 / severity `CRITICAL`.
+- **No rule escalates on distribution shift.** The strongest statement the
+  distribution scope makes is `REVIEW` (ADR-018).
+- **A family contributes at most one unit of independent support.** Measured at
+  2,000 correlated findings: no escalation from volume, and a single
+  deterministic failure alongside them still quarantines and is still cited.
+- **Evidence below a floor is demoted, never deleted.** It stays in the graph,
+  in the lineage and in the report, with the reason it did not count — because
+  "nothing was observed" and "something weak was observed and not acted on" are
+  different answers.
+- **Sub-threshold statistics are not reported as verdicts.** A metric below its
+  sample floor reports `INSUFFICIENT_SAMPLE` with the requirement named, and the
+  report states that a refusal to answer is not a negative answer.
+- **No configuration key can turn a rule off.** The rule table is code and data
+  in this process, is emitted verbatim into every report, and its version is
+  bound into the decision, the run context and the report digest — so two runs
+  that reached `ACCEPT` under different rule tables are never mistaken for the
+  same result.
+
+### The air gap, Module 4
+
+Every null is a **permutation null constructed from the data at analysis time**,
+so there is nothing to download and no calibration table to fetch. The offline
+guarantee is enforced dynamically for each Module 4 stage **separately** — shift
+analysis, evidence normalisation, policy evaluation, end-to-end assurance with
+report generation, and lab construction — rather than by one end-to-end run,
+because an end-to-end run would pass if any single stage were skipped.

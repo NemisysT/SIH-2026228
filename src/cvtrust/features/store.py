@@ -23,7 +23,7 @@ from ..core.config import Config
 from ..core.logging import get_logger
 from ..datasets.base import IngestIssue, RawDataset
 from ..datasets.manifest import ImageFacts, measure_image, resolve_bbox
-from .classical import ClassicalFeatureExtractor
+from .classical import ACQUISITION_NAMES, ClassicalFeatureExtractor
 from .perceptual import ahash, dhash, phash
 
 log = get_logger("features.store")
@@ -47,6 +47,16 @@ class FeatureSet:
     facts: dict[str, ImageFacts]
     extractor: dict[str, Any]
     index: dict[str, int] = field(default_factory=dict)
+    #: (n, k) un-normalised acquisition statistics in physical units, aligned by
+    #: row with ``sample_ids``, and the name of each column.  Added for Module 4
+    #: (ADR-016): population shift in a *named* physical quantity ("mean
+    #: luminance fell 22%") is a statement an analyst can check against the
+    #: imagery, while shift in a twice-normalised embedding coordinate is not.
+    #: Optional, defaulting to an empty array, so a feature extractor that does
+    #: not expose physical statistics degrades to NOT_ASSESSED for the marginal
+    #: metric rather than breaking the contract.
+    acquisition: np.ndarray = field(default_factory=lambda: np.zeros((0, 0), dtype=np.float64))
+    acquisition_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         self.index = {sid: i for i, sid in enumerate(self.sample_ids)}
@@ -94,6 +104,7 @@ def build_features(
     object_keys: list[tuple[str, str]] = []
     object_labels: list[str] = []
     object_vectors: list[np.ndarray] = []
+    acquisition = np.zeros((len(dataset.samples), len(ACQUISITION_NAMES)), dtype=np.float64)
 
     for row, sample in enumerate(dataset.samples):
         sample_ids.append(sample.sample_id)
@@ -107,7 +118,8 @@ def build_features(
         with Image.open(sample.abspath) as handle:
             image = handle.convert("RGB")
 
-        embeddings[row] = extractor.extract(image)
+        embeddings[row], raw_blocks = extractor.extract_with_blocks(image)
+        acquisition[row] = raw_blocks["acquisition"]
         p_codes[row] = phash(image, cfg.phash.dct_size, cfg.phash.hash_size)
         a_codes[row] = ahash(image)
         d_codes[row] = dhash(image)
@@ -137,6 +149,8 @@ def build_features(
         valid=valid,
         facts=facts,
         extractor=extractor.describe(),
+        acquisition=acquisition,
+        acquisition_names=ACQUISITION_NAMES,
     )
     log.info(
         "features: %d/%d samples decoded, %d object crops",

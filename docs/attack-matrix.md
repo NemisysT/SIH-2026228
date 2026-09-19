@@ -362,3 +362,250 @@ Or step by step:
 cvtrust lab provenance-build    --out provenance_lab
 cvtrust lab provenance-evaluate provenance_lab --out reports/provenance_evaluation.json
 ```
+
+---
+
+## Module 4 — the assurance lab
+
+Two labs, because Module 4 has two jobs and they fail in different ways.
+
+**Ten population pairs** exercise the distribution-shift characteriser. Nine of
+the ten contain **no attack at all**: they are legitimate operational changes —
+a night collection, a different sensor, a winter season, a desert terrain — and
+the measurement being reported is a *false-positive rate*, not a detection rate.
+This is the inversion that matters. For Modules 1–3 the lab is mostly attacks;
+here it is mostly the ordinary working conditions of a reconnaissance pipeline,
+because the failure this module can most easily commit is calling a legitimate
+change an attack.
+
+**Nineteen pipeline scenarios** exercise the fusion engine end to end. Every
+finding they fuse was produced by the **real** Module 1, 2 and 3 pipelines over
+the existing attack labs. Nothing is hand-written: a rule that fires on evidence
+no detector actually emits is exactly the defect an integration lab exists to
+catch, and a fixture written by the same author would hide it. A scenario whose
+upstream lab was not supplied is reported `NOT_RUN` with the reason, never
+faked and never silently dropped.
+
+### Population pairs — measured
+
+192 reference samples against 192 current samples (6 classes × 4 contributors ×
+8), `alpha = 0.01`, 999 permutations.
+
+| Pair | Attack? | Expected verdict | Observed | Energy *p* | Moved views | Unexplained |
+|---|:---:|---|---|---:|---|---|
+| `clean_baseline` | no | `NO_SHIFT_DETECTED` | ✅ same | 0.954 | — | — |
+| `operational_illumination` | no | `SHIFT_CONSISTENT_WITH_DECLARED_CONTEXT` | ✅ same | 0.001 | colour | — |
+| `operational_sensor` | no | `SHIFT_CONSISTENT_WITH_DECLARED_CONTEXT` | ✅ same | 0.001 | colour, gradient | — |
+| `operational_season` | no | `SHIFT_CONSISTENT_WITH_DECLARED_CONTEXT` | ✅ same | 0.001 | colour | — |
+| `operational_terrain` | no | `SHIFT_CONSISTENT_WITH_DECLARED_CONTEXT` | ✅ same | 0.001 | colour | — |
+| `undeclared_illumination` | no | `SHIFT_UNEXPLAINED_BY_DECLARED_CONTEXT` | ✅ same | 0.001 | colour | colour |
+| `misdeclared_sensor_as_illumination` | no | `SHIFT_PARTIALLY_EXPLAINED` | ✅ same | 0.001 | colour, gradient | **gradient** |
+| `misdeclared_illumination_as_season` | no | `SHIFT_CONSISTENT_WITH_DECLARED_CONTEXT` | ✅ same | 0.001 | colour | — |
+| `small_current_batch` | no | `INSUFFICIENT_SAMPLE` | ✅ same | — | — | — |
+| `no_context_declared` | no | `SHIFT_DETECTED_NO_CONTEXT` | ✅ same | 0.001 | colour, gradient | colour, gradient |
+
+**10 / 10 verdicts match. Zero false shift alarms on the clean baseline** —
+energy *p* = 0.954, and all four supporting metrics also negative (covariance
+*p* = 0.15, PSI *p* = 0.985, class-mix *p* = 1.0).
+
+Three of these rows are worth reading in full.
+
+- **`misdeclared_illumination_as_season` expects CONSISTENT, and that is not a
+  bug.** Illumination, season and terrain all place ~93% of their displacement
+  in the colour view, so a season declaration genuinely does cover an
+  illumination movement. The engine cannot tell them apart and says so, in a
+  limitation printed on every explanation: *"does not identify which declared
+  change occurred"*. The scenario is kept as the explicit **negative control**
+  for the explanation mechanism — the honest statement of its resolution limit.
+- **`misdeclared_sensor_as_illumination` is the paired positive control.** An
+  illumination declaration does *not* cover a sensor swap, because 81% of the
+  sensor transform's displacement lands in the gradient view. It comes back
+  `PARTIALLY_EXPLAINED` with `gradient` named as the residual — which is what
+  demonstrates the check has teeth rather than rubber-stamping any declaration.
+- **`small_current_batch` is a real shift the system refuses to report.** Six
+  current samples against 192. Both errors are available: claiming the shift
+  (unsupportable) and reporting stability (false reassurance). The verdict is
+  neither — `INSUFFICIENT_SAMPLE`, and the distribution scope is `NOT_ASSESSED`,
+  so the overall disposition cannot reach `ACCEPT`.
+
+### Pipeline scenarios — measured
+
+| Scenario | Expected | Observed | Evidence | Indep. families | Confounded | Unassessed scopes |
+|---|---|---|---:|---:|---:|---|
+| `clean_baseline` | `ACCEPT` | ✅ | 0 | 0 | 0 | — |
+| `operational_shift` | `ACCEPT` | ✅ | 1 | 0 | 0 | — |
+| `unexplained_shift` | `REVIEW` | ✅ | 1 | 1 | 0 | — |
+| `ood_without_attack` | `ACCEPT` | ✅ | 40 | 0 | 13 | — |
+| `ood_without_shift_assessment` | `NOT_ASSESSED` | ✅ | 39 | 0 | 0 | distribution |
+| `label_anomaly_during_shift` | `REVIEW` | ✅ | 24 | 0 | 20 | — |
+| `dataset_anomaly` | `REVIEW` | ✅ | 23 | 1 | 0 | — |
+| `dataset_tamper_deterministic` | `QUARANTINE` | ✅ | 5 | 1 | 0 | — |
+| `model_anomaly_uncalibrated` | `REVIEW` | ✅ | 2 | 1 | 0 | — |
+| `model_substitution` | `QUARANTINE` | ✅ | 4 | 2 | 0 | — |
+| `provenance_tampering` | `QUARANTINE` | ✅ | 5 | 1 | 0 | — |
+| `combined_attack` | `QUARANTINE` | ✅ | 49 | 6 | 34 | — |
+| `shift_with_independent_evidence` | `QUARANTINE` | ✅ | 6 | 1 | 0 | — |
+| `legitimate_reserialisation` | `REVIEW` | ✅ | 1 | 1 | 0 | — |
+| `legitimate_finetuning` | `QUARANTINE` | ✅ | 3 | 2 | 0 | — |
+| `unusual_initialisation` | `ACCEPT` | ✅ | 0 | 0 | 0 | — |
+| `legitimate_reprocess` | `ACCEPT` | ✅ | 0 | 0 | 0 | — |
+| `no_inputs` | `NOT_ASSESSED` | ✅ | 0 | 0 | 0 | all four |
+| `dataset_only` | `NOT_ASSESSED` | ✅ | 0 | 0 | 0 | model, provenance, distribution |
+
+**19 / 19 dispositions match, and every scenario fired exactly the rules its
+spec names — zero missing, zero unexpected.**
+
+### The legitimate-but-unusual group, and the two that do not reach ACCEPT
+
+Four scenarios contain no attack of any kind. Their expectations were
+**measured before they were written down**, and two of the four deliberately do
+not reach `ACCEPT` — for reasons about *identity*, not about malice.
+
+- **`unusual_initialisation` → `ACCEPT`, zero findings.** A clean model with
+  weight statistics well outside the usual range, assessed with **no reference**
+  so the peer-screening path is the one exercised. Unusual weights are not
+  evidence of a backdoor; quantisation-aware training, weight decay and layer
+  saturation all produce them.
+- **`legitimate_reprocess` → `ACCEPT`, zero findings.** The same input
+  legitimately processed twice, which every real pipeline does. Two records,
+  distinct nonces, sequences and signatures, reported as a duplicate *subject*
+  at observation level and never as replay.
+- **`legitimate_reserialisation` → `REVIEW`.** The same model re-exported: new
+  bytes, identical graph and parameter digests. Not an attack — and not silently
+  accepted either. "The artifact changed and the model did not" is a fact an
+  analyst should confirm was intentional. ADR-010's three separate digests are
+  what make this expressible at all; with one digest it would be
+  indistinguishable from substitution.
+- **`legitimate_finetuning` → `QUARANTINE`, and that is correct.** A model
+  legitimately fine-tuned from the reference. The artifact supplied is not the
+  artifact that was assured, which is a digest comparison and not an inference.
+  **Read the wording the rule uses:** *"The model is not the assured artifact"*,
+  with the rationale *"a model whose graph or parameter digest differs from its
+  trusted reference is a different model, whatever its metadata says"*. It never
+  says "tampered" and never says "malicious". The remedy is to re-assure the
+  fine-tuned model and make it the new reference — not to treat anyone as an
+  adversary. This scenario exists to keep `QUARANTINE ≠ malicious` visible.
+
+### The rows that carry the design decisions
+
+- **`ood_without_attack` reaches `ACCEPT` with 40 pieces of evidence, 13 of them
+  confounded.** A legitimate distribution shift alongside per-sample OOD scores
+  from Module 1. The OOD evidence is real, is preserved in the report, and does
+  not escalate — because OOD is not malice and a shift is not an attack.
+- **`ood_without_shift_assessment` reaches `NOT_ASSESSED` on nearly identical
+  evidence** — 39 items — purely because no reference population was supplied.
+  The pair is the cleanest demonstration of ADR-019: the same findings, and the
+  disposition moves because the *coverage* moved.
+- **`label_anomaly_during_shift` reaches `REVIEW` with 20 of 24 items
+  confounded.** This is the documented cost of ADR-017 stated as a measurement:
+  a genuine dataset attack coinciding with a legitimate shift is held at
+  `REVIEW` rather than escalated, because the confounding table cannot separate
+  them. `RULE-DATA-004` exists so the scope does not vanish entirely — *a
+  confounded finding is not a refuted one.*
+- **`shift_with_independent_evidence` reaches `QUARANTINE`, and the distribution
+  scope is `REVIEW` while provenance is `QUARANTINE`.** The escalation is
+  carried by the cryptography, not by the shift. If it were the other way round,
+  moving to a new sensor would quarantine a healthy pipeline.
+- **`combined_attack` produces 6 independent families across all four scopes
+  and keeps every scope's disposition separate** — dataset `REVIEW`,
+  distribution `REVIEW`, model `QUARANTINE`, provenance `QUARANTINE`. No
+  narrative collapse, no averaging.
+- **`dataset_only` reaches `NOT_ASSESSED` despite its one assessed scope being
+  clean.** Three scopes had no input. This was originally specified as `ACCEPT`
+  and the engine was right; the property is now published in the policy
+  description as `accept_requires_full_coverage`.
+
+### A live end-to-end measurement, including what it does *not* fix
+
+Run outside the lab harness, over the CLI, on the `operational_illumination`
+corpus — a clean corpus with a **legitimate** night-collection transform and no
+attack of any kind:
+
+```
+cvtrust dataset scan    <current>                      → 41 findings, exit 1
+cvtrust assurance shift <current> --reference <ref> --declare "illumination=low,acquisition_mode=night"
+                                                       → SHIFT_CONSISTENT_WITH_DECLARED_CONTEXT
+cvtrust assurance assess --dataset-report … --shift …  → REVIEW, exit 1
+```
+
+**Module 1 produced 41 false positives** — 40 `label_flip` and 1
+`systematic_mislabel` — on a corpus with no mislabelling in it. The illumination
+transform moved the feature space enough to break the neighbourhood assumption
+the label detector rests on. This is exactly the confounding ADR-017 names, now
+observed end to end rather than argued for.
+
+Module 4's response, and its honest limit:
+
+| | With the shift assessment supplied | Without it |
+|---|---|---|
+| Dataset disposition | `REVIEW` | `REVIEW` |
+| Governing rule | `RULE-DATA-004` | `RULE-DATA-002` |
+| Statement | *"every piece of it is explained by DISTRIBUTION_SHIFT … it does not count as independent evidence of manipulation"* | unexplained dataset evidence |
+| Evidence confounded | **41 of 42** | 0 |
+| Independent phenomena | **0** | 1 |
+
+**The disposition does not change, and that is a real limitation of the current
+rule table, not a success being understated.** What changes is the explanation
+an analyst reads, the confounding marks, and the independent-family count that
+other rules consume — so 41 drift-induced findings cannot corroborate anything.
+Both paths land on `REVIEW`, which is the conservative answer in both cases;
+a rule table that demoted confounded-only dataset evidence to `ACCEPT` would be
+the more dangerous error, because a genuine attack during a shift looks
+identical.
+
+### Performance
+
+Development host, Python 3.13, macOS, single-threaded. Measured at two
+population sizes to show where the cost actually is.
+
+| Stage | 240 / side | 480 / side | Notes |
+|---|---:|---:|---|
+| Corpus generation (lab) | 1.0 s | 2.0 s | Test fixture only |
+| Feature extraction, both sides | 2.0 s | 4.0 s | Dominates; it is Module 1 code |
+| **Shift characterisation** (5 metrics, all nulls) | **3.2 s** | **4.6 s** | Sub-linear: the energy test subsamples to 400/side |
+| Evidence normalisation (49 findings) | 0.5 ms | 0.7 ms | |
+| Evidence graph construction | 0.4 ms | 0.4 ms | |
+| **Policy evaluation** (23 rules) | **0.18 ms** | **0.18 ms** | Independent of population size |
+| Evidence summary | 0.05 ms | 0.05 ms | |
+| Fusion, end to end | 1 ms | 1 ms | |
+| Report construction | 13 ms | 18 ms | |
+| JSON serialisation | 1.7 ms | 2.7 ms | 536 KB / 739 KB |
+| `stable_digest()` | 13 ms | 18 ms | Canonicalises the whole report |
+| Markdown rendering | 0.2 ms | 0.1 ms | |
+| Peak RSS | 493 MB | 540 MB | Dominated by the feature matrices |
+
+Evidence-side cost at volumes no real pipeline should reach, to establish the
+shape of the curve:
+
+| Findings fused | Normalise | Graph | Policy |
+|---:|---:|---:|---:|
+| 1,000 | 7 ms | 4 ms | 1.3 ms |
+| 10,000 | 75 ms | 62 ms | 16 ms |
+
+Linear in the number of findings, and the policy engine stays under 20 ms at
+10,000 — so the whole fusion layer is free relative to the shift analysis, and
+the shift analysis is dominated by feature extraction rather than by the
+statistics. **No correctness was traded for any of this**: the energy test's
+subsampling cap is the only approximation, it is deterministic from the run
+seed, and both the number of points used and the number available are reported
+so a capped run is never read as a full one.
+
+### Reproducing
+
+```bash
+./scripts/assurance-evaluate.sh
+```
+
+Or step by step:
+
+```bash
+cvtrust lab assurance-build --out assurance_lab --per-class 8
+```
+
+```bash
+cvtrust lab assurance-evaluate assurance_lab --dataset-lab attack_lab --model-lab model_lab --provenance-lab provenance_lab --out reports/assurance-evaluation.json
+```
+
+The pipeline scenarios need the other three labs. Without them the shift pairs
+still run (`--pairs-only`), and every pipeline scenario is reported `NOT_RUN`
+with the reason rather than omitted.

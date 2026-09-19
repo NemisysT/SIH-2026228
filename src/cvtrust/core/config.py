@@ -375,6 +375,147 @@ class ProvenanceConfig(_Base):
     )
 
 
+class ShiftConfig(_Base):
+    """Module 4: population-level distribution-shift characterisation.
+
+    Every value here changes what a shift result *means*, so every value is in
+    the configuration hash and printed in the report.  Two of them are sample
+    floors rather than thresholds, and those are the important ones: a shift
+    metric that reports a confident verdict from a handful of samples is worse
+    than no metric at all.
+    """
+
+    alpha: float = Field(
+        default=0.01,
+        gt=0.0,
+        lt=0.5,
+        description="Significance level for the permutation energy test. The "
+        "omnibus test is the only one here with a genuine null distribution, so "
+        "it is the only one with an alpha.",
+    )
+    permutations: int = Field(
+        default=999,
+        ge=99,
+        le=9999,
+        description="Permutations drawn for the energy test's null. The smallest "
+        "resolvable p-value is 1/(permutations+1) and is reported alongside "
+        "every p-value, so a floor is never mistaken for certainty.",
+    )
+    min_reference_samples: int = Field(
+        default=20,
+        ge=8,
+        description="Below this the reference population cannot support a shift "
+        "claim and every metric reports INSUFFICIENT_SAMPLE.",
+    )
+    min_current_samples: int = Field(
+        default=20,
+        ge=8,
+        description="Below this the CURRENT population cannot support a shift "
+        "claim. Separate from the reference floor on purpose: the realistic "
+        "failure is a large reference and a tiny current batch, and a permutation "
+        "test stays valid there while losing all its power -- so a negative "
+        "result would be reported as reassurance when it is nothing of the kind.",
+    )
+    max_samples_per_side: int = Field(
+        default=400,
+        ge=50,
+        description="Cap on the points entering the quadratic energy test. "
+        "Subsampling is deterministic from the run seed and both the number used "
+        "and the number available are reported, so a capped run is never read as "
+        "a full one.",
+    )
+    covariance_components: int = Field(
+        default=8,
+        ge=2,
+        le=64,
+        description="Principal directions, fitted on the reference only, in "
+        "which the covariance comparison is made. A 614-dimensional covariance "
+        "from a few hundred samples is singular and its determinant is not "
+        "evidence.",
+    )
+    covariance_samples_per_component: int = Field(
+        default=5,
+        ge=2,
+        description="Samples required per principal direction before a "
+        "covariance is estimated at all.",
+    )
+    supporting_permutations: int = Field(
+        default=199,
+        ge=99,
+        le=9999,
+        description="FLOOR on the permutations drawn for the covariance, "
+        "marginal and categorical nulls. The marginal test raises it to "
+        "ceil(quantities / alpha), because Benjamini-Hochberg multiplies the "
+        "smallest attainable p-value by the number of tests: at 199 "
+        "permutations and 23 quantities the best achievable q is 0.115, so no "
+        "marginal could be significant at alpha 0.01 however large its shift. "
+        "Measured, and fixed, rather than reviewed and missed.",
+    )
+    max_supporting_permutations: int = Field(
+        default=4999,
+        ge=199,
+        le=99999,
+        description="Ceiling on that auto-scaling. If the multiplicity needs "
+        "more than this, the marginal metric says significance was NOT "
+        "resolvable rather than reporting a quiet 'no shift'.",
+    )
+    psi_bins: int = Field(default=10, ge=4, le=50)
+    psi_min_samples_per_bin: int = Field(default=5, ge=2)
+    psi_reporting_band: float = Field(
+        default=0.25,
+        gt=0.0,
+        description="Conventional PSI band used to LABEL a value in the report. "
+        "Credit-risk monitoring folklore, measured to fire on a clean reference "
+        "split in half at this project's sample sizes, and therefore NOT used as "
+        "a decision rule -- the decision comes from the permutation null. See "
+        "cvtrust.shift.metrics.PSI_BANDS.",
+    )
+    moved_block_share: float = Field(
+        default=0.15,
+        gt=0.0,
+        le=1.0,
+        description="Share of squared mean displacement a feature view must "
+        "carry before it counts as having moved, for the purpose of checking the "
+        "observed movement against the declared operational context.",
+    )
+
+
+class AssuranceConfig(_Base):
+    """Module 4: cross-module evidence fusion and the assurance policy engine.
+
+    Deliberately tiny.  Almost nothing about rule-based fusion is a tunable: a
+    rule either fires on the evidence present or it does not, and a 'fusion
+    sensitivity' knob would be a way to turn the policy off.  What is here are
+    the two genuine policy choices an operator has to make, plus the evidence
+    floor below which a finding is context rather than support.
+    """
+
+    accept_explained_shift: bool = Field(
+        default=True,
+        description="Whether a population shift that is fully consistent with a "
+        "declared operational change, with no independent integrity evidence "
+        "anywhere, resolves to ACCEPT (with the drift recorded) or to REVIEW. "
+        "ACCEPT by default: reporting every declared seasonal change as an open "
+        "question trains an analyst to ignore the tool, which is the expensive "
+        "failure. Operators running a higher-assurance posture set this false.",
+    )
+    corroboration_min_severity: str = Field(
+        default="MEDIUM",
+        description="Severity floor a finding must reach before it counts as "
+        "*support* for a policy rule rather than as context. INFO and LOW "
+        "findings remain in the report and in the lineage; they do not drive a "
+        "disposition.",
+    )
+    corroboration_min_confidence: float = Field(
+        default=0.30,
+        ge=0.0,
+        le=1.0,
+        description="Confidence floor for the same purpose. Applied only to "
+        "non-deterministic evidence: a cryptographic fact is not subject to a "
+        "confidence floor, because its confidence is not a measurement.",
+    )
+
+
 class AggregationConfig(_Base):
     alpha: float = Field(default=0.05, ge=0.0, le=0.5)
     min_contributor_samples: int = Field(default=8, ge=1)
@@ -447,6 +588,12 @@ class Config(_Base):
     #: same config hash as a dataset scan's thresholds, so the two are
     #: comparable artifacts.
     provenance: ProvenanceConfig = ProvenanceConfig()
+    #: Module 4. Present from this build onward for the same reason Modules 2
+    #: and 3 were: a shift analysis's sample floors and a fusion policy's
+    #: evidence floors belong in the same config hash as a dataset scan's
+    #: thresholds, so every artifact the platform produces is comparable.
+    shift: ShiftConfig = ShiftConfig()
+    assurance: AssuranceConfig = AssuranceConfig()
     aggregation: AggregationConfig = AggregationConfig()
     disposition: DispositionConfig = DispositionConfig()
     contributor: ContributorConfig = ContributorConfig()

@@ -1,0 +1,46 @@
+{
+  "classes": [
+    "vehicle",
+    "aircraft",
+    "building",
+    "vessel",
+    "terrain",
+    "personnel"
+  ],
+  "contributors": [
+    {
+      "blur": 0.0,
+      "exposure": 1.0,
+      "jpeg_quality": 92,
+      "name": "alpha",
+      "noise_sigma": 0.02
+    },
+    {
+      "blur": 0.4,
+      "exposure": 0.94,
+      "jpeg_quality": 85,
+      "name": "bravo",
+      "noise_sigma": 0.03
+    },
+    {
+      "blur": 0.2,
+      "exposure": 1.08,
+      "jpeg_quality": 90,
+      "name": "charlie",
+      "noise_sigma": 0.025
+    },
+    {
+      "blur": 0.6,
+      "exposure": 0.98,
+      "jpeg_quality": 80,
+      "name": "delta",
+      "noise_sigma": 0.035
+    }
+  ],
+  "created_at": "2026-09-19T01:42:23Z",
+  "generator_version": "1.0",
+  "image_size": 128,
+  "per_class_per_contributor": 8,
+  "seed": 20260918,
+  "total_samples": 192
+}

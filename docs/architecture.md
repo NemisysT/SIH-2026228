@@ -172,6 +172,95 @@ model_identity ──► identity comparison ────────► model_s
 The battery is forwarded once and the fingerprints are shared, so three
 detectors cost one pass rather than three.
 
+## 1c. The assurance engine (Module 4)
+
+The fourth entry point, and the only one that produces no forensics of its own.
+It characterises **population-level distribution shift**, then fuses the
+findings the other three modules already emitted into one explicit, versioned
+disposition — and the thing it most carefully does not do is add them up.
+
+```
+REFERENCE POPULATION              CURRENT POPULATION
+  declared corpus, or a             the operating batch
+  declared subset of the            under assessment
+  current dataset (weaker,
+  and recorded as weaker)
+        │  build_features                  │  build_features
+        ▼                                  ▼
+  PopulationView ────────┬─────────── PopulationView
+                         │
+                         ▼  ShiftCharacterizer
+        ┌────────────────────────────────────────────┐
+        │ energy distance + permutation null  OMNIBUS│  ← the only test that
+        │ mean displacement, per feature block       │    decides "shift"
+        │ covariance, cross-fitted PCA + permutation │  supporting detail,
+        │ marginal PSI + permutation + BH correction │  never decisive on
+        │ class mix, Jensen-Shannon + permutation    │  its own
+        └────────────────────────────────────────────┘
+                         │  every metric: ASSESSED | INSUFFICIENT_SAMPLE
+                         │                | NOT_ASSESSED
+                         ▼  declared context vs observed block shares
+                  ShiftAssessment   ── one of seven verdicts, never a score,
+                         │             and never the word "attack"
+   M1 report ─┐          │
+   M2 report ─┼──────────┤  Finding[]  carried VERBATIM; Module 4 rewrites
+   M3 report ─┘          │             nothing and re-verifies nothing
+                         ▼  normalise      ← family, class, floors, lineage
+                  NormalizedEvidence[]
+                         ▼  build_graph    ← dependency groups, confounding
+                   EvidenceGraph           ← a family contributes AT MOST ONE
+                         │                   unit of independent support
+                         ▼  AssurancePolicyEngine   23 explicit versioned rules
+                  ScopeDecision × 4        ← dataset · model · provenance ·
+                         │                   distribution, kept separate
+                         ▼  strictest across scopes
+                                QUARANTINE > REVIEW > NOT_ASSESSED > ACCEPT
+                  AssuranceDecision        ← supporting · contradicting ·
+                         │                   unassessed · lineage · rationale
+                         ▼
+           PipelineAssuranceReport  JSON + console/Markdown
+                   NO aggregate score, and there will not be one
+```
+
+### Why shift is characterised before fusion
+
+A population shift is an **active phenomenon**: it determines which other
+evidence is confounded. A statistical label anomaly measured during a seasonal
+change is not independent evidence of mislabelling, because the neighbourhood
+structure the detector relies on has moved. The graph therefore cannot be built
+until the shift verdict is known. Building it first and patching it afterwards
+would make the confounding marks depend on the order the patches arrived in.
+
+The converse matters just as much and is why `build_graph` takes
+`extra_active_phenomena`: a shift the declared context *explains* raises only an
+`INFO` finding, so it never clears the corroboration floor and would not mark
+its own family as present — yet it still makes label neighbourhoods
+unrepresentative. It is declared active explicitly so that an explained shift
+keeps confounding without ever being able to corroborate.
+
+### Why the disposition is the strictest scope, not the first match
+
+Modules 1–3 use a first-match rule chain: the rules are ordered by severity and
+the first one that fires wins. Module 4 cannot do that, because its four scopes
+are four independent facts about four different artifacts. A first-match chain
+would let whichever scope happened to be evaluated first speak for the others.
+
+So every rule that fires, fires; each scope takes the strictest disposition
+among its own fired rules; and the overall disposition is the strictest across
+scopes, **with the scope named**. `NOT_ASSESSED` sits between `ACCEPT` and
+`REVIEW` in that order, which has one deliberate consequence: an overall
+`ACCEPT` requires every scope to have been assessed. Three clean scopes and one
+missing report is `NOT_ASSESSED`, never `ACCEPT`.
+
+### Why there is no weighting
+
+There is no `dataset_weight`, no `model_weight`, no calibrated posterior over
+"is this pipeline compromised". Such a model would need a joint prior over
+attack classes, detector error rates measured on operational data, and an
+independence structure — and this system has none of the three. What it has
+instead is a rule table an analyst can read, argue with, and version. See
+ADR-016.
+
 ## 2. Package layout
 
 | Package | Responsibility |
@@ -184,7 +273,9 @@ detectors cost one pass rather than three.
 | `reporting/` | The report model and its renderings. Human views are generated *from* the report object so the two cannot drift. |
 | `models/` | **Module 2.** Model adapters (ONNX, TorchScript, torch), the three-digest manifest, the reference battery, behavioural fingerprinting, parameter statistics, activation analysis, trigger search, and optional local benchmark ingestion. |
 | `provenance/` | **Module 3.** The canonical record schema, output and configuration binding, Ed25519 key lifecycle, the offline trust store, signing, record verification, the replay database, the hash-chained log and its anchor, and the performance benchmark. |
-| `attack_lab/` | Corpus generation, five reproducible dataset attacks, a fifteen-scenario model attack lab with its own CNN trainer, a twenty-eight-scenario provenance attack lab, and all three evaluation harnesses. |
+| `shift/` | **Module 4.** Population-level distribution-shift metrics with their permutation nulls, reference-population identity and contamination caveats, the declared-context explanation table, the characteriser and its finding factory. |
+| `assurance/` | **Module 4.** Evidence families and the confounding table, evidence normalisation and the dependency-aware evidence graph, the 23-rule policy engine, the assurance decision, and the fusion orchestrator. |
+| `attack_lab/` | Corpus generation, five reproducible dataset attacks, a fifteen-scenario model attack lab with its own CNN trainer, a twenty-eight-scenario provenance attack lab, a ten-pair population lab with fifteen end-to-end assurance scenarios, and all four evaluation harnesses. |
 | `cli/` | `typer` application. |
 
 ## 3. Design decisions that shape everything else
@@ -391,6 +482,133 @@ The cost is that the chain cannot be built before signing, which is no cost at
 all: a producer signs and then appends, which is the order it would use anyway.
 The `missing_signature` lab scenario exists to keep this decision honest — it
 strips a signature mid-log and asserts the chain breaks.
+
+### ADR-016 — Rule-based evidence fusion, never a universal trust score
+
+Module 4's job is to combine evidence from four sources. The tempting shape is a
+number: weight each module, sum, threshold. **That number does not exist and
+this system does not produce one.**
+
+Producing it honestly would require three things the project does not have:
+
+1. a **prior** over how often each attack class occurs in a multi-contributor
+   pipeline — unmeasurable without operational incident data;
+2. **error rates** for each detector on operational data — the reason
+   `HEURISTIC_UNCALIBRATED` exists as a basis at all (ADR-013);
+3. an **independence structure** — and the detectors here are demonstrably
+   dependent (ADR-017).
+
+Absent all three, any weighting is a set of numbers chosen to make the demo look
+right, presented with a precision it does not have. Worse, it is *unarguable*:
+an analyst who disagrees with `trust = 0.62` has nothing to disagree with.
+
+So fusion is a table of 23 rules, each with an id, a scope, its conditions, its
+required evidence, its exclusions, its disposition and its rationale, all
+printed in every report. An analyst who disagrees with a disposition can name
+the rule. A reviewer can diff the table between versions. The policy version is
+bound into the decision, the run context and the report digest, so two runs that
+reached `ACCEPT` under different rule tables are not mistaken for the same
+result.
+
+The cost is real and is accepted: the rule table is coarser than a calibrated
+model would be, and it cannot express "three weak signals together". That is
+deliberate — see ADR-017 for why "together" is the hard part.
+
+### ADR-017 — Dependency-aware evidence aggregation
+
+Corroboration is the one aggregation the engine does perform, and the naive form
+of it is wrong. Five near-duplicate detectors that all fire on the same cluster
+are five reports of **one** phenomenon, not five independent observations. A
+rule that required "two or more detectors" would be satisfied by a single noisy
+family.
+
+Every attack class is therefore mapped to an **evidence family** (`FAMILY_OF`),
+and a family contributes **at most one unit of independent support** regardless
+of how many findings or detectors it contains. `independent_family_count` is a
+count of distinct phenomena, and the report says in as many words that it is not
+a score and is never combined with severity or confidence.
+
+A second table, `CONFOUNDED_BY`, records the one confounding relationship the
+project can actually justify: `DATASET_LABELLING` is confounded by
+`DISTRIBUTION_SHIFT`, because the leave-one-out neighbourhood statistic that
+detects label anomalies assumes a stable feature distribution. Every other entry
+is empty, on purpose — a confounding table populated by intuition would silence
+real findings.
+
+The limitation is stated in every report: **independence is decided by a curated
+table, not measured.** Two detectors correlated in a way the table does not
+record would still be counted as two phenomena. Publishing the table is what
+makes that assumption challengeable rather than hidden.
+
+### ADR-018 — Distribution shift is never evidence of manipulation
+
+The single most damaging rule this system could contain is `shift detected →
+attack`. Terrain, season, sensor, illumination and collection-protocol changes
+are the *normal condition* of a surveillance or reconnaissance pipeline, and
+they produce the same feature-space signature as a deliberate insertion.
+
+No rule in the policy escalates on shift alone. The strongest statement the
+distribution scope can make is `REVIEW`, and that is reserved for a shift the
+declared operational context does not account for — which is an *open question*,
+phrased as one. Any `QUARANTINE` in a run that also observed a shift came from
+another scope's own evidence, and the report names that scope.
+
+The symmetric error is also avoided. Consistency between an observed shift and a
+declared change is **not confirmation** of that change: a manipulation
+engineered to move the same feature views would be reported identically. The
+declaration is a claim by the supplying side and is marked
+`declaration_validated: false` in every explanation.
+
+Two measurements forced the current design and are recorded here because they
+are the reason the thresholds are what they are:
+
+- An in-sample PCA basis made **every** current population look contracted
+  (log-determinant ratio −2.35 on two independent clean draws). Cross-fitting
+  the basis — fit on half the reference, compare the held-out half — moved it to
+  +0.56, and the fixed threshold was then replaced by a permutation null.
+- The conventional PSI band of 0.25 fired on a clean pair at 0.37. Measured on a
+  clean reference split in half, max-PSI across 23 quantities had mean 0.49 and
+  p95 0.65. The band is retained as a **label only**, documented as unvalidated
+  folklore, and the decision is made by a permutation null with a
+  Benjamini–Hochberg correction.
+
+### ADR-019 — Coverage-aware disposition: NOT_ASSESSED outranks ACCEPT
+
+A scope with no input is `NOT_ASSESSED`, never `ACCEPT`, and `NOT_ASSESSED` sits
+above `ACCEPT` in the strictness order. The consequence is deliberate: **an
+overall `ACCEPT` requires all four scopes to have been assessed.**
+
+This is the cheapest attack available in a multi-contributor pipeline — withhold
+the report rather than forge one — and the disposition vocabulary is the defence.
+Three green scopes must not average away the fourth's absence.
+
+The gap is reported at two granularities: the scope, with a remedy naming the
+command that would close it, and each individual attack class left open. A
+pipeline with major unassessed attack classes is not equivalent to a
+comprehensively assessed clean one, and the report does not present it as
+equivalent.
+
+`NOT_ASSESSED` sits *below* `REVIEW` and `QUARANTINE` for the same reason: a
+missing model report must not soften a broken hash chain into "incomplete".
+
+### ADR-020 — Cryptographic evidence stays deterministic inside fusion
+
+ADR-014 keeps Module 3's `DETERMINISTIC` findings out of any arithmetic. Module
+4 adds two properties that the corroboration machinery made necessary.
+
+**Deterministic evidence is exempt from the confidence floor.** The floor exists
+to stop weak statistical evidence driving a disposition. A failed signature
+check has no "confidence" to be weak — it is a fact — so applying the floor to it
+would turn the operator's noise-suppression knob into a switch for turning off
+the cryptography. Raising `corroboration_min_confidence` to 0.99 and
+`corroboration_min_severity` to `CRITICAL` leaves a broken chain quarantined,
+and a test asserts exactly that.
+
+**A cryptographic failure is never transformed into a probability.** Nothing in
+Module 4 maps a `DETERMINISTIC` finding onto a statistical scale, and the
+`Finding` schema refuses a `DETERMINISTIC` finding at any confidence other than
+1.0 — so a report edited to read "signature check, 0.4 confidence" is rejected at
+load time rather than fused.
 
 ## 4. Extension points
 

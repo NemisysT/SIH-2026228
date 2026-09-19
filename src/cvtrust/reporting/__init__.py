@@ -1,5 +1,12 @@
 """Assurance reporting: the machine-readable record and its human renderings."""
 
+from .assurance_render import render_assurance_markdown, render_assurance_report
+from .assurance_report import (
+    ASSURANCE_GLOBAL_LIMITATIONS,
+    PipelineAssuranceReport,
+    ScopeSummary,
+    build_assurance_report,
+)
 from .model_render import (
     render_model_evaluation,
     render_model_markdown,
@@ -53,4 +60,8 @@ __all__ = [
     "VerificationMatrix", "RecordSummary", "build_provenance_report",
     "PROVENANCE_GLOBAL_LIMITATIONS", "render_provenance_report",
     "render_provenance_markdown", "render_provenance_evaluation",
+    # Module 4
+    "PipelineAssuranceReport", "ScopeSummary", "build_assurance_report",
+    "ASSURANCE_GLOBAL_LIMITATIONS", "render_assurance_report",
+    "render_assurance_markdown",
 ]

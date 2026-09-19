@@ -1,0 +1,73 @@
+{
+  "conditions": {
+    "desert_terrain": {
+      "declared_context": {
+        "terrain": "desert"
+      },
+      "description": "a different area of operations: warm, bright, low-contrast ground with less fine structure",
+      "expected_blocks": [
+        "colour"
+      ]
+    },
+    "different_sensor": {
+      "declared_context": {
+        "sensor": "sensor_b"
+      },
+      "description": "a different imaging chain: softer optics, column-correlated fixed-pattern noise, different spectral response",
+      "expected_blocks": [
+        "gradient",
+        "colour"
+      ]
+    },
+    "identical": {
+      "declared_context": {},
+      "description": "the same collection conditions on both sides",
+      "expected_blocks": []
+    },
+    "low_illumination": {
+      "declared_context": {
+        "acquisition_mode": "night",
+        "illumination": "low"
+      },
+      "description": "dusk/night collection: lower exposure, compressed contrast, visible read noise",
+      "expected_blocks": [
+        "colour"
+      ]
+    },
+    "winter_season": {
+      "declared_context": {
+        "season": "winter"
+      },
+      "description": "winter collection: snow cover, low solar angle, desaturated and colder ground",
+      "expected_blocks": [
+        "colour"
+      ]
+    }
+  },
+  "created_at": "2026-09-19T01:42:24Z",
+  "lab_version": "1.0",
+  "note": "every transform here is a LEGITIMATE collection condition. The lab's purpose is to establish that the system observes them without classifying them as attacks.",
+  "pairs": [
+    "clean_baseline",
+    "operational_illumination",
+    "operational_sensor",
+    "operational_season",
+    "operational_terrain",
+    "undeclared_illumination",
+    "misdeclared_sensor_as_illumination",
+    "misdeclared_illumination_as_season",
+    "small_current_batch",
+    "no_context_declared"
+  ],
+  "per_class_per_contributor": 8,
+  "reference_context": {
+    "acquisition_mode": "day",
+    "illumination": "daylight",
+    "season": "summer",
+    "sensor": "sensor_a",
+    "source": "lab baseline declaration; synthetic, and a claim like any other",
+    "terrain": "mixed"
+  },
+  "reference_samples": 192,
+  "seed": 20260917
+}

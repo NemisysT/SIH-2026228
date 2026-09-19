@@ -1,0 +1,19 @@
+{
+  "attack": false,
+  "condition": "different_sensor",
+  "condition_description": "a different imaging chain: softer optics, column-correlated fixed-pattern noise, different spectral response",
+  "created_at": "2026-09-19T01:42:23Z",
+  "current_samples": 192,
+  "declared": "low_illumination",
+  "expected_verdict": "SHIFT_PARTIALLY_EXPLAINED",
+  "lab_version": "1.0",
+  "note": "a platform swap declared as an illumination change. The declaration predicts the colour movement and not the gradient movement an optical change produces, so a named residual remains. This is the pair that shows the explanation check has teeth.",
+  "reference_samples": 192,
+  "scenario": "misdeclared_sensor_as_illumination",
+  "seed": 20260917,
+  "shift_present": true,
+  "transform_expected_blocks": [
+    "gradient",
+    "colour"
+  ]
+}
