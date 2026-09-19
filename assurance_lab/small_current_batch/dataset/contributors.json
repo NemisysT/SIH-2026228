@@ -1,0 +1,35 @@
+{
+  "samples": {
+    "aircraft/alpha_000.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "building/alpha_000.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "personnel/alpha_000.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "terrain/alpha_000.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "vehicle/alpha_000.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "vessel/alpha_000.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    }
+  },
+  "schema": "cvtrust.contributors/1.0"
+}

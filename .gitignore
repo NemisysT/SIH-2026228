@@ -13,7 +13,7 @@ attack_lab/
 model_lab/
 provenance_lab/
 reports/
-**/dataset/
+
 
 # Operational key material and verifier state. Never version-controlled.
 keys/

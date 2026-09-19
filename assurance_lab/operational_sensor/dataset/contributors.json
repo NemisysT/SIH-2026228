@@ -1,0 +1,965 @@
+{
+  "samples": {
+    "aircraft/alpha_000.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "aircraft/alpha_001.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "aircraft/alpha_002.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "aircraft/alpha_003.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "aircraft/alpha_004.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "aircraft/alpha_005.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "aircraft/alpha_006.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "aircraft/alpha_007.jpg": {
+      "batch": "alpha-b01",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "aircraft/bravo_000.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "aircraft/bravo_001.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "aircraft/bravo_002.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "aircraft/bravo_003.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "aircraft/bravo_004.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "aircraft/bravo_005.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "aircraft/bravo_006.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "aircraft/bravo_007.jpg": {
+      "batch": "bravo-b01",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "aircraft/charlie_000.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "aircraft/charlie_001.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "aircraft/charlie_002.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "aircraft/charlie_003.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "aircraft/charlie_004.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "aircraft/charlie_005.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "aircraft/charlie_006.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "aircraft/charlie_007.jpg": {
+      "batch": "charlie-b01",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "aircraft/delta_000.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "aircraft/delta_001.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "aircraft/delta_002.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "aircraft/delta_003.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "aircraft/delta_004.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "aircraft/delta_005.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "aircraft/delta_006.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "aircraft/delta_007.jpg": {
+      "batch": "delta-b01",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "building/alpha_000.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "building/alpha_001.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "building/alpha_002.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "building/alpha_003.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "building/alpha_004.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "building/alpha_005.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "building/alpha_006.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "building/alpha_007.jpg": {
+      "batch": "alpha-b01",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "building/bravo_000.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "building/bravo_001.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "building/bravo_002.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "building/bravo_003.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "building/bravo_004.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "building/bravo_005.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "building/bravo_006.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "building/bravo_007.jpg": {
+      "batch": "bravo-b01",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "building/charlie_000.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "building/charlie_001.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "building/charlie_002.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "building/charlie_003.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "building/charlie_004.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "building/charlie_005.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "building/charlie_006.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "building/charlie_007.jpg": {
+      "batch": "charlie-b01",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "building/delta_000.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "building/delta_001.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "building/delta_002.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "building/delta_003.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "building/delta_004.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "building/delta_005.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "building/delta_006.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "building/delta_007.jpg": {
+      "batch": "delta-b01",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "personnel/alpha_000.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "personnel/alpha_001.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "personnel/alpha_002.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "personnel/alpha_003.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "personnel/alpha_004.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "personnel/alpha_005.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "personnel/alpha_006.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "personnel/alpha_007.jpg": {
+      "batch": "alpha-b01",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "personnel/bravo_000.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "personnel/bravo_001.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "personnel/bravo_002.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "personnel/bravo_003.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "personnel/bravo_004.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "personnel/bravo_005.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "personnel/bravo_006.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "personnel/bravo_007.jpg": {
+      "batch": "bravo-b01",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "personnel/charlie_000.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "personnel/charlie_001.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "personnel/charlie_002.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "personnel/charlie_003.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "personnel/charlie_004.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "personnel/charlie_005.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "personnel/charlie_006.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "personnel/charlie_007.jpg": {
+      "batch": "charlie-b01",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "personnel/delta_000.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "personnel/delta_001.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "personnel/delta_002.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "personnel/delta_003.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "personnel/delta_004.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "personnel/delta_005.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "personnel/delta_006.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "personnel/delta_007.jpg": {
+      "batch": "delta-b01",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "terrain/alpha_000.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "terrain/alpha_001.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "terrain/alpha_002.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "terrain/alpha_003.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "terrain/alpha_004.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "terrain/alpha_005.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "terrain/alpha_006.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "terrain/alpha_007.jpg": {
+      "batch": "alpha-b01",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "terrain/bravo_000.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "terrain/bravo_001.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "terrain/bravo_002.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "terrain/bravo_003.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "terrain/bravo_004.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "terrain/bravo_005.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "terrain/bravo_006.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "terrain/bravo_007.jpg": {
+      "batch": "bravo-b01",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "terrain/charlie_000.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "terrain/charlie_001.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "terrain/charlie_002.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "terrain/charlie_003.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "terrain/charlie_004.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "terrain/charlie_005.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "terrain/charlie_006.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "terrain/charlie_007.jpg": {
+      "batch": "charlie-b01",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "terrain/delta_000.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "terrain/delta_001.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "terrain/delta_002.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "terrain/delta_003.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "terrain/delta_004.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "terrain/delta_005.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "terrain/delta_006.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "terrain/delta_007.jpg": {
+      "batch": "delta-b01",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "vehicle/alpha_000.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "vehicle/alpha_001.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "vehicle/alpha_002.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "vehicle/alpha_003.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "vehicle/alpha_004.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "vehicle/alpha_005.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "vehicle/alpha_006.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "vehicle/alpha_007.jpg": {
+      "batch": "alpha-b01",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "vehicle/bravo_000.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "vehicle/bravo_001.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "vehicle/bravo_002.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "vehicle/bravo_003.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "vehicle/bravo_004.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "vehicle/bravo_005.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "vehicle/bravo_006.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "vehicle/bravo_007.jpg": {
+      "batch": "bravo-b01",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "vehicle/charlie_000.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "vehicle/charlie_001.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "vehicle/charlie_002.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "vehicle/charlie_003.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "vehicle/charlie_004.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "vehicle/charlie_005.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "vehicle/charlie_006.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "vehicle/charlie_007.jpg": {
+      "batch": "charlie-b01",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "vehicle/delta_000.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "vehicle/delta_001.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "vehicle/delta_002.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "vehicle/delta_003.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "vehicle/delta_004.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "vehicle/delta_005.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "vehicle/delta_006.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "vehicle/delta_007.jpg": {
+      "batch": "delta-b01",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "vessel/alpha_000.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "vessel/alpha_001.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "vessel/alpha_002.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "vessel/alpha_003.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "vessel/alpha_004.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "vessel/alpha_005.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "vessel/alpha_006.jpg": {
+      "batch": "alpha-b00",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "vessel/alpha_007.jpg": {
+      "batch": "alpha-b01",
+      "contributor": "alpha",
+      "source": "platform-a"
+    },
+    "vessel/bravo_000.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "vessel/bravo_001.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "vessel/bravo_002.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "vessel/bravo_003.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "vessel/bravo_004.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "vessel/bravo_005.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "vessel/bravo_006.jpg": {
+      "batch": "bravo-b00",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "vessel/bravo_007.jpg": {
+      "batch": "bravo-b01",
+      "contributor": "bravo",
+      "source": "platform-b"
+    },
+    "vessel/charlie_000.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "vessel/charlie_001.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "vessel/charlie_002.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "vessel/charlie_003.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "vessel/charlie_004.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "vessel/charlie_005.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "vessel/charlie_006.jpg": {
+      "batch": "charlie-b00",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "vessel/charlie_007.jpg": {
+      "batch": "charlie-b01",
+      "contributor": "charlie",
+      "source": "platform-c"
+    },
+    "vessel/delta_000.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "vessel/delta_001.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "vessel/delta_002.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "vessel/delta_003.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "vessel/delta_004.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "vessel/delta_005.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "vessel/delta_006.jpg": {
+      "batch": "delta-b00",
+      "contributor": "delta",
+      "source": "platform-d"
+    },
+    "vessel/delta_007.jpg": {
+      "batch": "delta-b01",
+      "contributor": "delta",
+      "source": "platform-d"
+    }
+  },
+  "schema": "cvtrust.contributors/1.0"
+}
