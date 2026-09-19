@@ -5,6 +5,12 @@ verdict, number and sentence it shows was produced by Modules 1–4 and written
 to a JSON report.
 
 ```bash
+# To just run the demo, use the launcher at the repository root instead:
+#   ./run.sh          builds the feed if needed, serves this application,
+#                     and waits until it answers   -> http://localhost:3000
+# The steps below are the same thing by hand, for working inside web/.
+# From the repository root, ./setup.sh does both of these on a fresh clone.
+
 # 1. Build the feed from the real pipelines (from the repository root)
 cvtrust analyst export --out reports/analyst
 
@@ -12,6 +18,10 @@ cvtrust analyst export --out reports/analyst
 npm install     # only needed once; node_modules is vendored for offline use
 npm run dev     # http://localhost:3000
 ```
+
+`npm install` needs the `legacy-peer-deps` setting in `.npmrc`: `@react-three/fiber`
+declares a peer range of react `<19.3` and this application is built and
+verified against react 19.3.0. Do not resolve it by downgrading react.
 
 ## Layout
 

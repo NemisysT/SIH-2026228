@@ -9,12 +9,12 @@ Blockchain & Cybersecurity · **Category:** Software
 An offline, air-gapped assurance layer for computer-vision pipelines whose
 contributors, datasets, models and inference records are all untrusted.
 
-> **Build status: Modules 1, 2, 3 and 4 of 5 complete** — foundation and dataset
+> **Build status: all five modules complete** — foundation and dataset
 > forensics (M1), model forensics and backdoor assurance (M2), inference
 > provenance and cryptographic integrity (M3), distribution shift and evidence
-> fusion (M4). The analyst web platform (M5) is **not** implemented, and every
-> report declares what it did not assess rather than silently omitting it. Run
-> `cvtrust info` to see exactly what this build assesses.
+> fusion (M4), and the analyst platform in `web/` (M5), which computes nothing
+> of its own. Every report declares what it did not assess rather than silently
+> omitting it. Run `cvtrust info` to see exactly what this build assesses.
 >
 > **There is no trust score.** Module 4 combines evidence from all four scopes
 > by an explicit, versioned table of 23 rules — printed in full in every report
@@ -57,17 +57,130 @@ schema — `EvidenceItem.observation` is a required, non-empty mapping.
 ## Quick start
 
 ```bash
-./scripts/setup.sh      # the only step that needs a network
-./scripts/demo.sh       # the whole story, end to end, ~15 s
+git clone <repo-url> && cd cv-trust
+./setup.sh      # once: installs everything and builds the demo data
+./run.sh        # the complete demo -> http://localhost:3000
 ```
 
-The demo generates a clean corpus from a published seed, establishes a
+Two commands, and there is nothing else to start.
+
+`./setup.sh` is the whole setup. From a fresh clone it checks the
+prerequisites, creates `.venv` and installs the engine, creates the working
+directories and local configuration that Git deliberately does not carry,
+installs the analyst platform's dependencies, builds the four attack labs,
+exports the analyst feed the frontend reads, and smoke-tests the result. The
+first run takes about five minutes, most of it generating labs; running it
+again skips whatever is already in place and takes seconds. It never
+overwrites configuration you have edited.
+
+**Prerequisites:** Python **3.11+**, and Node **20.9+** for the analyst
+platform. Nothing else — no database, no services, no GPU, and **no secrets,
+API keys or accounts anywhere in this project**. `./setup.sh` is the only step
+that needs a network; runtime never touches one.
+
+Then run the demo:
+
+```bash
+./run.sh
+```
+
+`./run.sh` is the canonical launcher and the only command a judge needs. It
+checks that `./setup.sh` has been run, verifies the engine's output is on disk
+(and builds it if it is not), builds the analyst platform if the sources have
+changed since the last build, serves it, and waits until the dashboard actually
+answers before printing **DEMO READY** with every URL. Ctrl+C stops it and
+takes the server down with it.
+
+**There is exactly one long-lived process.** Modules 1–4 are a library and a
+CLI, not a service: the engine *runs once*, writes JSON reports to
+`reports/analyst/`, and is then finished. Module 5 — the Next.js application in
+`web/` — reads those files from disk. So there is no API server, no database,
+no queue, no worker and no reverse proxy to start, and nothing listening except
+the platform itself on port 3000.
+
+| | |
+|---|---|
+| `./run.sh` | the demo: the production build, served on http://localhost:3000 |
+| `./run.sh --port 3010` | serve somewhere else (or `PORT=3010 ./run.sh`) |
+| `./run.sh --dev` | frontend in development mode, with hot reload |
+| `./run.sh --refresh-feed` | re-run the real Module 1–4 pipelines and rewrite `reports/analyst` first |
+| `./run.sh --rebuild` | rebuild the frontend even if the current build looks current |
+| `./run.sh --prepare-only` | build the labs, the feed and the frontend, then exit without serving |
+| `./run.sh --open` | open the dashboard in a browser once it is ready |
+
+**To stop the demo: press Ctrl+C.** The launcher stops the server, its worker
+processes and nothing else; it leaves no orphan holding port 3000, and running
+`./run.sh` again afterwards is a clean start. If a platform is *already*
+serving on the port, `./run.sh` says so and reuses it rather than starting a
+second copy.
+
+The engine also demonstrates itself in the terminal, with no frontend involved:
+
+```bash
+./scripts/demo.sh                     # the whole story, end to end, ~15 s
+```
+
+That demo generates a clean corpus from a published seed, establishes a
 cryptographic baseline, measures its own false-alarm rate on clean data, builds a
 four-contributor attack, detects it with evidence, scores itself against ground
 truth, tampers with the dataset after the baseline, catches that, and finishes by
 printing what it does not claim.
 
+### Setup options
+
+| | |
+|---|---|
+| `./setup.sh` | everything below, in order. The normal path. |
+| `./setup.sh --skip-web` | Python engine only; do not touch Node or `web/` |
+| `./setup.sh --skip-model-lab` | skip Module 2's model training (~70 s). 17 of the 19 analyst scenarios then export as `NOT_RUN` **with the reason** — the engine reporting missing evidence rather than inventing it. |
+| `./setup.sh --skip-feed` | no labs, no analyst feed. The frontend will say it has no data. |
+| `./setup.sh --force` | recreate `.venv`, reinstall the frontend's dependencies, rebuild the labs and the feed |
+| `./setup.sh --wheelhouse DIR` | install from pre-downloaded wheels with no package index — see [docs/deployment.md](docs/deployment.md) |
+| `PYTHON=/path/to/python3.13 ./setup.sh` | build `.venv` with a specific interpreter |
+
+`scripts/setup.sh` still works: it forwards to `./setup.sh`.
+
+### What setup generates locally, and why none of it is in Git
+
+Everything here is either reproducible from a published seed, operational key
+material, or too large to carry in version control. A fresh clone does not have
+it, and `./setup.sh` creates it.
+
+| Path | What it is |
+|---|---|
+| `.venv/` | the Python environment |
+| `attack_lab/` `model_lab/` `provenance_lab/` | generated corpora, trained models, signed logs and **test-only private keys** — pure functions of their seeds |
+| `assurance_lab/_scenarios/` | per-run scratch for the fusion scenarios (the lab itself *is* in Git) |
+| `reports/` | every report the engine writes |
+| `reports/analyst/` | the analyst feed, rebuilt from the engine by `cvtrust analyst export` |
+| `reports/live/` | left empty: an operator fills it with a real assessment ([docs/deployment.md](docs/deployment.md)) |
+| `keys/` | mode 700. Operational Ed25519 signing keys, if you create any. Never committed. |
+| `web/node_modules/` | installed by `npm ci` from the committed `web/package-lock.json`. About 550 MB, carried across the air gap with the repository rather than committed |
+| `web/.env` | local frontend environment, copied from `web/.env.example` and never overwritten |
+
+### One-time manual configuration
+
+**There is none, and there are no secrets.** The system has no cloud, no
+external API, no account and no token; the frontend reads JSON from disk. The
+only local configuration file is `web/.env`, which `./setup.sh` writes from the
+checked-in `web/.env.example`. Edit it only to point the platform at a feed
+outside this repository (`CVTRUST_DEMO_DIR`, `CVTRUST_LIVE_DIR`).
+
+Two things are genuinely optional and are *not* automated:
+
+- **Publishing a live assessment.** `reports/live/` stays empty until an
+  operator puts a real assessment there. Demo and live data are never blended,
+  and asking for live data never silently returns demo data. See
+  [docs/deployment.md](docs/deployment.md) § Publishing a live assessment.
+- **The visual-fidelity check.** `scripts/module5_visual_check.py` diffs the
+  frontend against the supplied design reference, which is not part of this
+  repository. Point `CVTRUST_DESIGN_REFERENCE` at it if you have it; the
+  matching tests skip themselves when it is absent.
+
+### Everyday commands
+
 ```bash
+./scripts/demo.sh       # end-to-end demonstration, ~15 s
 ./scripts/evaluate.sh   # generate all 6 dataset scenarios, measure every detector
 ./.venv/bin/pytest      # 811 tests, ~5 min
 ./.venv/bin/cvtrust info
@@ -380,8 +493,14 @@ it computes nothing — every verdict, number and sentence it displays was
 produced by the engine and written to a JSON report.
 
 ```bash
+./run.sh                                       # both of the steps below, ready-checked
+```
+
+which is, underneath, nothing more than:
+
+```bash
 cvtrust analyst export --out reports/analyst   # run the real pipelines, write the feed
-cd web && npm install && npm run dev           # http://localhost:3000
+cd web && npm run build && npm start           # http://localhost:3000
 ```
 
 Ten screens: the assurance dashboard, dataset, model, provenance, audit trail,

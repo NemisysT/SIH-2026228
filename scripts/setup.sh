@@ -1,24 +1,12 @@
 #!/usr/bin/env bash
-# One-command setup. This is the only step that needs a package index;
-# runtime is air-gapped.
+# MOVED. The canonical setup entry point is ./setup.sh in the repository root,
+# which does everything this script used to do (create .venv, install the
+# dependencies) and everything else a fresh clone needs: the Git-ignored
+# working directories, web/.env, the frontend's dependencies, the attack labs
+# and the analyst feed.
+#
+# This shim stays so that older instructions keep working. It forwards every
+# argument; run `./setup.sh --help` for the options.
 set -euo pipefail
-cd "$(dirname "$0")/.."
-
-PY="${PYTHON:-python3}"
-echo "==> creating virtual environment (.venv)"
-"$PY" -m venv .venv
-
-echo "==> installing dependencies"
-./.venv/bin/python -m pip install --quiet --upgrade pip setuptools wheel
-./.venv/bin/python -m pip install --quiet -r requirements.txt
-./.venv/bin/python -m pip install --quiet -e .
-
-echo
-./.venv/bin/cvtrust version
-echo
-echo "Setup complete. The machine can now be disconnected."
-echo
-echo "  ./scripts/demo.sh        end-to-end demonstration"
-echo "  ./scripts/evaluate.sh    generate the attack lab and measure the detectors"
-echo "  ./.venv/bin/pytest       full test suite"
-echo "  ./.venv/bin/cvtrust info coverage statement for this build"
+printf 'note: scripts/setup.sh now forwards to ./setup.sh, the canonical entry point.\n\n' >&2
+exec "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/setup.sh" "$@"

@@ -14,15 +14,28 @@ were measured on a single laptop CPU core.
 Installation is the only step that needs a package index.
 
 ```bash
+./setup.sh
+```
+
+That is the canonical entry point, and it is safe to run again at any time: it
+checks the prerequisites, creates `.venv`, installs the engine, creates the
+Git-ignored working directories (`reports/`, `reports/live/`, `keys/`), writes
+`web/.env` from its template, installs the analyst platform's dependencies,
+builds the attack labs and exports the analyst feed. `./setup.sh --help` lists
+the options; `scripts/setup.sh` forwards to it.
+
+For the Python engine alone, on a machine with no Node:
+
+```bash
+./setup.sh --skip-web
+```
+
+Or by hand, which is all `./setup.sh` does for this part:
+
+```bash
 python3 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt
 ./.venv/bin/pip install -e .
-```
-
-Or:
-
-```bash
-./scripts/setup.sh
 ```
 
 Verify, then disconnect the machine:
@@ -36,6 +49,9 @@ Verify, then disconnect the machine:
 
 Build a wheelhouse on a connected machine with the *same* platform and Python
 minor version, transfer it, and install with the index disabled:
+
+`./setup.sh --wheelhouse wheelhouse` does this half automatically once the
+wheels are in place.
 
 ```bash
 # connected machine
@@ -154,16 +170,20 @@ do containerise, run with `--network none` and mount datasets read-only.
 
 ```
 cv-trust/
+├── setup.sh          THE setup entry point: run this after cloning
 ├── src/cvtrust/      the platform
+├── web/              the analyst platform (Module 5)
 ├── tests/            unit · integration · adversarial · regression
 ├── docs/             architecture, threat model, research, coverage, ...
 ├── configs/          default.yaml
-├── scripts/          setup.sh · demo.sh · evaluate.sh · model-evaluate.sh
+├── scripts/          demo.sh · evaluate.sh · model-evaluate.sh
 │                     · provenance-evaluate.sh · assurance-evaluate.sh
+│                     · module5-verify.sh · setup.sh (forwards to ../setup.sh)
 ├── attack_lab/       generated dataset corpora and scenarios (not in VCS)
 ├── model_lab/        generated model artifacts and scenarios (not in VCS)
 ├── provenance_lab/   generated logs, keys and trust stores (not in VCS)
-├── assurance_lab/    generated population pairs (not in VCS)
+├── assurance_lab/    population pairs — IN VCS; the analyst feed is built
+│                     from it. Only _scenarios/ scratch is generated
 └── reports/          generated reports (not in version control)
 ```
 
@@ -499,12 +519,30 @@ about thirty seconds and needs the four labs to have been built first
 ### Running it
 
 ```bash
+./run.sh           # http://localhost:3000
+```
+
+`./run.sh` is the canonical launcher for the whole demo. It verifies that the
+feed above exists (and builds it if it does not), rebuilds the frontend if its
+sources have changed since the last build, starts the server, and only reports
+`DEMO READY` once the dashboard actually answers. Ctrl+C stops the server and
+its worker processes. `./run.sh --dev` serves in development mode instead, and
+`./run.sh --port N` moves it off 3000.
+
+It is a launcher, not a new runtime: underneath it runs exactly the commands
+this document describes, and they still work directly if you prefer them.
+
+```bash
 cd web
 npm run build
 npm start          # http://localhost:3000
 ```
 
 Or `npm run dev` for development. Both are local servers; neither reaches out.
+
+One long-lived process is involved in the entire demo — this one. The engine is
+a CLI that has already finished by the time the platform starts; there is no
+API service, database, queue or worker to deploy alongside it.
 
 ### Publishing a live assessment
 

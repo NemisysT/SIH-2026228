@@ -16,12 +16,16 @@ tokens that went missing for review rather than only a number.
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-REFERENCE = Path("/Users/mervinmandanna/Downloads/SIH Web design reference")
+REFERENCE = Path(os.environ.get(
+    "CVTRUST_DESIGN_REFERENCE",
+    "/Users/mervinmandanna/Downloads/SIH Web design reference",
+))
 WEB = ROOT / "web"
 
 #: reference file -> transformed file

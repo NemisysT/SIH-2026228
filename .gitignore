@@ -9,10 +9,16 @@ venv/
 # provenance_lab/ contains private keys -- test-only ones, derived from a
 # published seed, but private keys nonetheless, and a key material file that
 # looks committable is a habit worth not forming.
-attack_lab/
-model_lab/
-provenance_lab/
-reports/
+# The leading slash matters: unanchored `attack_lab/` also matched the
+# SOURCE package src/cvtrust/attack_lab/, which silently kept the lab
+# generators out of the repository.
+/attack_lab/
+/model_lab/
+/provenance_lab/
+/reports/
+# The Module 4 population lab itself IS committed (the analyst feed is
+# built from it); only the per-run scratch directory is generated.
+/assurance_lab/_scenarios/
 
 
 # Operational key material and verifier state. Never version-controlled.
@@ -42,9 +48,12 @@ htmlcov/
 
 # Module 5: the analyst feed is regenerated from the engine by
 # `cvtrust analyst export`, and reports/live is filled by an operator.
-reports/analyst/
-reports/live/
-web/.next/
+/reports/analyst/
+/reports/live/
+/web/.next/
 # Carried across the air gap with the repository rather than committed;
 # see docs/deployment.md § Module 5.
-web/node_modules/
+/web/node_modules/
+
+# Runtime logs and pid file written by ./run.sh.
+/.run/

@@ -9,6 +9,7 @@ deployed to. These tests fail the build if any of those come back.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -97,7 +98,24 @@ def test_no_analytics_or_telemetry_dependency() -> None:
         assert not re.search(r"analytics|telemetry|sentry|datadog|segment", name, re.I), (
             f"{name} is a telemetry dependency and the target environment allows none"
         )
-    assert (WEB / ".env").read_text(encoding="utf-8").strip() == "NEXT_TELEMETRY_DISABLED=1"
+    # web/.env is Git-ignored, so it is a local file ./setup.sh writes from the
+    # checked-in web/.env.example. Both must turn Next's build telemetry off;
+    # comments and commented-out settings in them are not a reason to fail.
+    for name in (".env.example", ".env"):
+        path = WEB / name
+        assert path.is_file(), f"web/{name} is missing — run ./setup.sh from the repository root"
+        settings = dict(
+            line.split("=", 1)
+            for line in (raw.strip() for raw in path.read_text(encoding="utf-8").splitlines())
+            if line and not line.startswith("#") and "=" in line
+        )
+        assert settings.get("NEXT_TELEMETRY_DISABLED") == "1", (
+            f"web/{name} must set NEXT_TELEMETRY_DISABLED=1; the target environment allows no telemetry"
+        )
+        for key, value in settings.items():
+            assert not value.startswith(("http://", "https://")), (
+                f"web/{name} points {key} at a URL; the platform reads paths on disk, never a service"
+            )
 
 
 def test_the_platform_reads_reports_from_disk_not_from_a_service() -> None:
@@ -109,7 +127,10 @@ def test_the_platform_reads_reports_from_disk_not_from_a_service() -> None:
         )
 
 
-REFERENCE = Path("/Users/mervinmandanna/Downloads/SIH Web design reference")
+REFERENCE = Path(os.environ.get(
+    "CVTRUST_DESIGN_REFERENCE",
+    "/Users/mervinmandanna/Downloads/SIH Web design reference",
+))
 
 #: Sections reused from the reference, with the reference file to compare to.
 REUSED_SECTIONS = {
