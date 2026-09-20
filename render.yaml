@@ -27,7 +27,7 @@ services:
   - type: web
     name: sih26228-analyst-platform
     runtime: docker
-    repo: https://github.com/NemisysT/cv-trust
+    repo: https://github.com/NemisysT/SIH-2026228
     branch: master
     region: oregon
     plan: free
