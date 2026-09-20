@@ -1,0 +1,51 @@
+# Render Blueprint — SIH26228, Trustworthy Computer Vision Integrity Assurance.
+#
+# ONE service, deliberately.
+#
+# The analyst platform in web/ is a read-only console over the assurance
+# engine: it computes nothing, calls no API, and reads the JSON reports that
+# Modules 1-4 wrote (lib/analyst/source.ts). The computer vision therefore runs
+# at image build time, in stage 1 of the Dockerfile, and the served process is
+# Node alone. That leaves nothing for a second service to do:
+#
+#   * no separate API — the frontend's own routes under /api/analyst serve the
+#     engine's report files, and api/server.py is a local single-user demo
+#     layer the platform does not consult;
+#   * no database — the reports are files, the engine holds no mutable state,
+#     and nothing is written at request time;
+#   * no disk — /app/reports/analyst is baked into the image and is identical
+#     on every instance, so there is nothing to persist;
+#   * no worker — there is no asynchronous work. The long CV/ML step is the
+#     build, not a request.
+#
+# Docker rather than a native runtime because the build needs BOTH toolchains
+# at once: Python 3.13 with torch and onnxruntime to run the engine, then Node
+# 22 to build the frontend against what it produced. Render's native runtimes
+# provide one or the other.
+
+services:
+  - type: web
+    name: sih26228-analyst-platform
+    runtime: docker
+    repo: https://github.com/NemisysT/cv-trust
+    branch: master
+    region: oregon
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    # Liveness only, and no disk I/O: whether either report source has data is
+    # /api/analyst/status, and an empty source is a state the UI renders rather
+    # than a reason to restart a healthy server.
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      # There are no secrets in this project: no API key, no token, no account,
+      # no database URL. Everything below is configuration.
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
+      # Where the platform reads its two report sources. Set explicitly so the
+      # data layer never depends on the server process's working directory.
+      - key: CVTRUST_DEMO_DIR
+        value: /app/reports/analyst
+      - key: CVTRUST_LIVE_DIR
+        value: /app/reports/live

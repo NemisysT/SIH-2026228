@@ -30,6 +30,8 @@ app/                     routes — one per analyst area, plus the report endpoi
   page.tsx               the assurance dashboard
   dataset|model|provenance|audit|shift|evidence|decision|coverage|demo/
   api/analyst/report/…   serves the engine's report files, byte for byte
+  api/analyst/status     whether each source has data, and what to run if not
+  api/health             liveness for a platform health check; no disk I/O
 components/
   landing/               the design reference's sections, carrying SIH data
   platform/              shell, primitives and the evidence explorer
@@ -62,6 +64,19 @@ screen and the report disagree, the screen is wrong — and
 
 **There is no score.** No trust score, no security score, no gauge, no weighted
 combination. The engine has none by design and the UI does not add one.
+
+## Deployment
+
+`npm start` serves the production build and is what `../run.sh` and
+`../scripts/module5-verify.sh` use. A container build additionally sets
+`NEXT_OUTPUT_STANDALONE=1`, which makes Next emit `.next/standalone` — the same
+compiled application with only the traced closure of `node_modules` beside it.
+It is off by default because `next start` will not serve a standalone build. See
+[`../docs/deployment.md`](../docs/deployment.md) § Docker.
+
+Two environment variables matter in a deployment, and neither is a secret:
+`CVTRUST_DEMO_DIR` and `CVTRUST_LIVE_DIR`, the two report directories. Set them
+absolutely wherever the server's working directory is not `web/`.
 
 ## Offline
 

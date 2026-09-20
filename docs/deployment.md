@@ -166,6 +166,65 @@ Docker is deliberately **not** mandatory: a container adds an image-distribution
 problem to an air-gapped deployment. A native path is always available. If you
 do containerise, run with `--network none` and mount datasets read-only.
 
+The repository's `Dockerfile` is the reviewer-facing build, and it is a useful
+thing to read even if you never deploy it, because it states the air gap in
+executable form:
+
+```bash
+docker build -t cvtrust-analyst .
+docker run --rm --network none -p 3000:10000 cvtrust-analyst
+```
+
+Three stages. The first is Python 3.13 with CPU-only torch and onnxruntime; it
+generates the Module 1, 2 and 3 labs from their published seeds, runs the real
+Modules 1-4 over all 19 pipeline scenarios, and writes the analyst feed. The
+second is Node 22, which runs the projection tests and builds the frontend
+against that feed. The third carries **only Node and the reports** — no Python,
+no torch, no imagery, no dataset. So the container that serves traffic does not
+contain the engine, cannot re-run it, and needs no network: every number it
+shows was computed during the build and is on its disk as JSON.
+
+`scripts/verify-analyst-feed.py` is why the build cannot ship a degraded image.
+`cvtrust analyst export` exits 1 when a scenario had no upstream lab and is
+therefore `NOT_RUN` — correct at the CLI, where the frontend renders the reason.
+An image is different: it would present a dashboard with an empty Module 2
+column for reasons that have nothing to do with the data. The script turns that
+into a failed build.
+
+The second stage sets `NEXT_OUTPUT_STANDALONE=1`, which is the only difference
+between the image's frontend and a local one. It makes Next emit
+`.next/standalone` — the same compiled application with the traced closure of
+`node_modules` beside it, ~38 MB rather than ~550 MB. It is off by default
+because `next start` refuses to serve a standalone build, and `next start` is
+what `web/package.json`, `run.sh` and `scripts/module5-verify.sh` use.
+
+## Hosted deployment (Render)
+
+`render.yaml` is a Render Blueprint for the same image, and it describes **one**
+web service, which is the whole architecture:
+
+| Would need | Why there is none |
+|---|---|
+| A separate API service | The frontend reads reports from disk. Its own routes under `/api/analyst` serve them; `api/server.py` is a local single-user demo layer the platform does not consult |
+| A database | The reports are files and nothing is written at request time |
+| A persistent disk | `/app/reports/analyst` is baked into the image and identical on every instance |
+| A background worker | There is no asynchronous work. The long CV/ML step is the build |
+
+Docker rather than a native Render runtime because the build needs both
+toolchains at once: Python with torch to run the engine, then Node to build the
+frontend against what it produced.
+
+Two things a hosted deployment changes, and neither is cosmetic:
+
+- **`LIVE` is empty.** `reports/` is not version-controlled, so the image ships
+  the demo feed and nothing else. The platform says "no live assessment is
+  present" and names the command that would publish one. It does not fall back
+  to laboratory data, which is the behaviour Module 5 is built around.
+- **The air gap is a property of the image, not of the host.** The served
+  container makes no outbound call, but a public URL is by definition reachable.
+  For the target environment, run the same image with `--network none` on your
+  own hardware.
+
 ## Repository layout on disk
 
 ```
